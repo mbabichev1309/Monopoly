@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Monopoly — Комната ожидания</title>
+    <link rel="stylesheet" href="src/style.css">
+    <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+    <div id="main">
+        <div id="greeting">
+            <h1>Комната ожидания</h1>
+        </div>
+
+        <div id="lobby-info">
+            <h2>Код лобби: <span id="lobby-code" class="lobby-code" title="Кликни чтобы скопировать"></span></h2>
+            <h4 id="copy-hint">Поделись этим кодом с другими игроками</h4>
+        </div>
+
+        <div id="players-section">
+            <h3>Игроки (<span id="player-count">0</span>/<span id="player-max">0</span>):</h3>
+            <ul id="player-list"></ul>
+        </div>
+
+        <div id="host-controls" style="display:none">
+            <button id="btn-start"><h4>Начать игру</h4></button>
+        </div>
+
+        <div id="error-message"></div>
+    </div>
+
+    <script>
+        const socket = io();
+
+        const lobbyId = sessionStorage.getItem("lobbyId");
+        const me = JSON.parse(sessionStorage.getItem("me") || "null");
+        const isHost = sessionStorage.getItem("isHost") === "1";
+
+        if (!lobbyId || !me) {
+            window.location.replace("index.html");
+        }
+
+        const lobbyCodeEl = document.getElementById("lobby-code");
+        const copyHintEl = document.getElementById("copy-hint");
+        lobbyCodeEl.innerText = lobbyId;
+        if (isHost) {
+            document.getElementById("host-controls").style.display = "";
+        }
+
+        lobbyCodeEl.style.cursor = "pointer";
+        lobbyCodeEl.addEventListener("click", async () => {
+            try {
+                await navigator.clipboard.writeText(lobbyId);
+            } catch (e) {
+                const r = document.createRange();
+                r.selectNodeContents(lobbyCodeEl);
+                const s = window.getSelection();
+                s.removeAllRanges();
+                s.addRange(r);
+                document.execCommand("copy");
+                s.removeAllRanges();
+            }
+            const prev = copyHintEl.innerText;
+            copyHintEl.innerText = "✓ Скопировано!";
+            copyHintEl.style.color = "#3aa744";
+            setTimeout(() => {
+                copyHintEl.innerText = prev;
+                copyHintEl.style.color = "";
+            }, 1500);
+        });
+
+        if (isHost) {
+            navigator.clipboard.writeText(lobbyId).catch(() => {});
+        }
+
+        const errorMsg = document.getElementById("error-message");
+        function showError(msg) {
+            errorMsg.innerText = msg;
+            setTimeout(() => { errorMsg.innerText = ""; }, 4000);
+        }
+
+        socket.on("connect", () => {
+            socket.emit("lobby:rejoin", { lobbyId, playerName: me.name });
+        });
+
+        socket.on("lobby:updated", ({ players, maxPlayers, hostSocketId }) => {
+            document.getElementById("player-count").innerText = players.length;
+            document.getElementById("player-max").innerText = maxPlayers;
+
+            const list = document.getElementById("player-list");
+            list.innerHTML = "";
+            for (const p of players) {
+                const li = document.createElement("li");
+                const swatch = document.createElement("span");
+                swatch.className = "color-swatch";
+                swatch.style.background = p.color;
+                li.appendChild(swatch);
+                const label = document.createElement("span");
+                label.innerText = p.name + (p.socketId === hostSocketId ? " (хост)" : "");
+                li.appendChild(label);
+                list.appendChild(li);
+            }
+
+            const meRef = players.find((p) => p.name === me.name);
+            if (meRef) {
+                sessionStorage.setItem("me", JSON.stringify(meRef));
+            }
+        });
+
+        socket.on("lobby:error", ({ message }) => {
+            showError(message);
+        });
+
+        socket.on("game:start", () => {
+            window.location.href = "game.html";
+        });
+
+        document.getElementById("btn-start").onclick = () => {
+            socket.emit("lobby:start", { lobbyId });
+        };
+    </script>
+</body>
+</html>

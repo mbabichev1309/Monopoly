@@ -1,0 +1,18 @@
+{
+    "startingJackpot": 200,
+    "minBet": 50,
+    "symbols": ["💎", "👑", "⭐", "🍒"],
+    "tripleMultipliers": {
+        "🍒": 10,
+        "⭐": 20,
+        "👑": 30,
+        "💎": 50
+    },
+    "pairMultipliers": {
+        "🍒": 2,
+        "⭐": 3,
+        "👑": 5
+    },
+    "jackpotPairSymbol": "💎",
+    "jackpotBonusMultiplier": 10
+}

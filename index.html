@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Monopoly — Лобби</title>
+    <link rel="stylesheet" href="src/style.css">
+    <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+    <div id="main">
+        <div id="greeting">
+            <h1>Монополия онлайн</h1>
+        </div>
+
+        <div id="mode-tabs">
+            <button id="tab-create" class="tab-active"><h4>Создать игру</h4></button>
+            <button id="tab-join"><h4>Присоединиться</h4></button>
+        </div>
+
+        <div id="form-create" class="lobby-form">
+            <h3>Твоё имя: <input type="text" id="create-name" maxlength="16"></h3>
+            <h3>Цвет: <input type="color" id="create-color"></h3>
+            <h3>Макс. игроков (2–6):
+                <input type="number" id="create-max" value="2" min="2" max="6">
+            </h3>
+            <button id="btn-create"><h4>Создать</h4></button>
+        </div>
+
+        <div id="form-join" class="lobby-form" style="display:none">
+            <h3>Код лобби: <input type="text" id="join-code" maxlength="5" style="text-transform:uppercase"></h3>
+            <h3>Твоё имя: <input type="text" id="join-name" maxlength="16"></h3>
+            <h3>Цвет: <input type="color" id="join-color"></h3>
+            <button id="btn-join"><h4>Войти</h4></button>
+        </div>
+
+        <div id="error-message"></div>
+    </div>
+
+    <script>
+        const socket = io();
+
+        function randomColor() {
+            const h = Math.floor(Math.random() * 360);
+            const s = 65 + Math.floor(Math.random() * 25);
+            const l = 45 + Math.floor(Math.random() * 15);
+            return hslToHex(h, s, l);
+        }
+        function hslToHex(h, s, l) {
+            s /= 100; l /= 100;
+            const k = (n) => (n + h / 30) % 12;
+            const a = s * Math.min(l, 1 - l);
+            const f = (n) => {
+                const c = l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+                return Math.round(255 * c).toString(16).padStart(2, "0");
+            };
+            return `#${f(0)}${f(8)}${f(4)}`;
+        }
+        document.getElementById("create-color").value = randomColor();
+        document.getElementById("join-color").value = randomColor();
+
+        const tabCreate = document.getElementById("tab-create");
+        const tabJoin = document.getElementById("tab-join");
+        const formCreate = document.getElementById("form-create");
+        const formJoin = document.getElementById("form-join");
+        const errorMsg = document.getElementById("error-message");
+
+        tabCreate.onclick = () => {
+            formCreate.style.display = "";
+            formJoin.style.display = "none";
+            tabCreate.classList.add("tab-active");
+            tabJoin.classList.remove("tab-active");
+        };
+        tabJoin.onclick = () => {
+            formCreate.style.display = "none";
+            formJoin.style.display = "";
+            tabJoin.classList.add("tab-active");
+            tabCreate.classList.remove("tab-active");
+        };
+
+        function showError(msg) {
+            errorMsg.innerText = msg;
+            setTimeout(() => { errorMsg.innerText = ""; }, 4000);
+        }
+
+        document.getElementById("btn-create").onclick = () => {
+            const name = document.getElementById("create-name").value.trim();
+            const color = document.getElementById("create-color").value;
+            const maxPlayers = parseInt(document.getElementById("create-max").value, 10);
+            if (!name) { showError("Введи имя."); return; }
+            socket.emit("lobby:create", { maxPlayers, playerName: name, playerColor: color });
+        };
+
+        document.getElementById("btn-join").onclick = () => {
+            const lobbyId = document.getElementById("join-code").value.trim().toUpperCase();
+            const name = document.getElementById("join-name").value.trim();
+            const color = document.getElementById("join-color").value;
+            if (!lobbyId) { showError("Введи код лобби."); return; }
+            if (!name) { showError("Введи имя."); return; }
+            socket.emit("lobby:join", { lobbyId, playerName: name, playerColor: color });
+        };
+
+        socket.on("lobby:created", ({ lobbyId, you }) => {
+            sessionStorage.setItem("lobbyId", lobbyId);
+            sessionStorage.setItem("me", JSON.stringify(you));
+            sessionStorage.setItem("isHost", "1");
+            window.location.href = "register.html";
+        });
+
+        socket.on("lobby:joined", ({ lobbyId, you }) => {
+            sessionStorage.setItem("lobbyId", lobbyId);
+            sessionStorage.setItem("me", JSON.stringify(you));
+            sessionStorage.setItem("isHost", "0");
+            window.location.href = "register.html";
+        });
+
+        socket.on("lobby:error", ({ message }) => {
+            showError(message);
+        });
+    </script>
+</body>
+</html>

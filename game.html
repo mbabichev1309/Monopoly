@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Монополия</title>
+    <link rel="stylesheet" href="src/game.css">
+    <script src="/socket.io/socket.io.js"></script>
+    <script type="module" src="script/main.js" defer></script>
+</head>
+<body>
+
+    <div class="display-border" id="card-display">
+        <div id="card">
+            <div class="card-empty">Нажми на клетку поля или игрока</div>
+        </div>
+        <button id="exit-to-menu-btn">← Выйти в меню</button>
+    </div>
+
+    <div class="display-border" id="main">
+        <canvas id="main-canvas" width="900" height="900"></canvas>
+    </div>
+
+    <div class="right-column">
+        <div class="display-border" id="player-list">
+            <h1>Игроки</h1>
+            <div id="players-container"></div>
+            <h2 class="log-title">Лог событий</h2>
+            <div id="event-log"></div>
+            <button id="open-history-btn" class="toggle-btn" style="margin-top:8px">📖 Полная история</button>
+        </div>
+
+        <div class="display-border" id="own-cards">
+            <div class="own-cards-header">
+                <h3>Мои карты</h3>
+                <button id="own-cards-toggle" class="toggle-btn">Развернуть ▲</button>
+            </div>
+            <div id="own-cards-list"></div>
+        </div>
+
+        <div class="display-border" id="roll-dice">
+            <div class="dice-row">
+                <canvas id="dice-canvas" width="180" height="70"></canvas>
+            </div>
+            <div class="dice-btns">
+                <button id="roll-dice-button"><h4>Бросить</h4></button>
+                <button id="end-turn-button"><h4>Конец хода</h4></button>
+            </div>
+            <button id="use-jail-card-button" style="display:none; margin-top:8px">🔑 Использовать карту освобождения</button>
+        </div>
+    </div>
+
+</body>
+</html>

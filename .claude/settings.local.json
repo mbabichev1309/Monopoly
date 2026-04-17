@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e \"require\\('./server/config'\\); require\\('./server/GameState'\\); require\\('./server/LobbyManager'\\); console.log\\('ok'\\)\")",
+      "Bash(node server.js)"
+    ]
+  }
+}

@@ -1,0 +1,7 @@
+{
+    "giftMaxPerRecipient": 500,
+    "hurryLapCooldown": 2,
+    "lobbyCodeLength": 5,
+    "lobbyMinPlayers": 2,
+    "lobbyMaxPlayers": 6
+}

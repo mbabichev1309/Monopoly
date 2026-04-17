@@ -1,0 +1,10 @@
+{
+    "startBalance": 1500,
+    "passGoBonus": 200,
+    "jailFine": 50,
+    "maxJailTurns": 3,
+    "boardSize": 40,
+    "jailPosition": 10,
+    "disconnectGracePeriodMs": 10000,
+    "logLimit": 1000
+}

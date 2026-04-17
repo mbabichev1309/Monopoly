@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Monopoly — История событий</title>
+    <link rel="stylesheet" href="src/style.css">
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        body { display: block; padding: 20px; }
+        #log-main {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 30px;
+            background: linear-gradient(180deg, rgba(26, 18, 8, 0.95) 0%, rgba(10, 6, 2, 0.98) 100%);
+            border: 1px solid rgba(212, 175, 55, 0.25);
+        }
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px 16px;
+            margin-bottom: 20px;
+            padding: 14px;
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px dashed rgba(212, 175, 55, 0.3);
+            align-items: center;
+        }
+        .controls label {
+            font-family: 'Playfair Display', serif;
+            color: #d4c091;
+            font-size: 0.9rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+        }
+        .controls input[type="text"] {
+            flex: 1;
+            min-width: 200px;
+        }
+        .controls input[type="checkbox"] {
+            accent-color: #d4af37;
+            width: 16px;
+            height: 16px;
+        }
+        #log-list {
+            max-height: 75vh;
+            overflow-y: auto;
+            padding: 15px;
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid rgba(212, 175, 55, 0.15);
+            font-family: 'Playfair Display', serif;
+            font-size: 0.95rem;
+        }
+        .log-row {
+            padding: 6px 8px;
+            border-bottom: 1px dotted rgba(212, 175, 55, 0.1);
+            color: #e8d7a6;
+            display: flex;
+            gap: 10px;
+            align-items: baseline;
+        }
+        .log-time {
+            font-family: 'Cinzel', monospace;
+            color: #8c7548;
+            font-size: 0.82rem;
+            min-width: 80px;
+            flex-shrink: 0;
+        }
+        .log-text { flex: 1; }
+        .log-player, .log-card {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 0 5px;
+            border-radius: 2px;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+        .log-player { color: #f5e6c8; background: rgba(255, 255, 255, 0.04); }
+        .log-card { color: #e8d7a6; background: rgba(212, 175, 55, 0.05); }
+        .log-dot {
+            display: inline-block;
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            border: 1px solid rgba(0, 0, 0, 0.4);
+        }
+        h1 {
+            font-family: 'Cinzel', serif;
+            color: #d4af37;
+            text-align: center;
+            letter-spacing: 4px;
+            margin-bottom: 20px;
+        }
+        .empty {
+            text-align: center;
+            color: #8c7548;
+            padding: 40px;
+            font-style: italic;
+        }
+        .stat-bar {
+            color: #8c7548;
+            font-size: 0.85rem;
+            margin: 0 0 10px;
+            font-family: 'Playfair Display', serif;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div id="log-main">
+        <h1>ИСТОРИЯ ИГРЫ</h1>
+        <div class="controls">
+            <input type="text" id="filter-text" placeholder="🔍 Фильтр по тексту...">
+            <label><input type="checkbox" id="show-time" checked> Время</label>
+            <label><input type="checkbox" class="cat" data-cat="roll" checked> 🎲 Ходы</label>
+            <label><input type="checkbox" class="cat" data-cat="buy" checked> 🏠 Покупки/продажи</label>
+            <label><input type="checkbox" class="cat" data-cat="build" checked> 🏗️ Постройки</label>
+            <label><input type="checkbox" class="cat" data-cat="pay" checked> 💵 Платежи</label>
+            <label><input type="checkbox" class="cat" data-cat="card" checked> 🃏 Карты</label>
+            <label><input type="checkbox" class="cat" data-cat="casino" checked> 🎰 Казино</label>
+            <label><input type="checkbox" class="cat" data-cat="trade" checked> 🤝 Торговля</label>
+            <label><input type="checkbox" class="cat" data-cat="jail" checked> 🔒 Тюрьма</label>
+            <label><input type="checkbox" class="cat" data-cat="other" checked> Прочее</label>
+            <label><input type="checkbox" class="cat" data-cat="debug"> 🛠 Debug</label>
+            <button id="refresh-btn">Обновить</button>
+        </div>
+        <div class="stat-bar" id="stat-bar"></div>
+        <div id="log-list"></div>
+    </div>
+
+    <script>
+        const socket = io();
+        const $ = (id) => document.getElementById(id);
+
+        let rawLog = [];
+        let players = [];
+        let board = [];
+        let groupColors = {};
+
+        function escapeHtml(s) {
+            return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+        }
+
+        function cellLogColor(cell) {
+            if (cell.group) return groupColors[cell.group];
+            switch (cell.type) {
+                case "chance": case "community": return "#9a9a9a";
+                case "casino": return "#8b0000";
+                case "tax": return "#3a2e1a";
+                case "railroad": return "#2a2a2a";
+                case "utility": return "#2d6b3f";
+                case "corner":
+                    if (cell.action === "go") return "#8ac82f";
+                    if (cell.action === "jail" || cell.action === "go-to-jail") return "#9a9a9a";
+                    return "#b8860b";
+                default: return "#888";
+            }
+        }
+
+        function formatText(raw) {
+            return escapeHtml(raw)
+                .replace(/\{p:(\d+)\}/g, (m, id) => {
+                    const p = players.find((pp) => pp.id === parseInt(id, 10));
+                    if (!p) return m;
+                    return `<span class="log-player"><span class="log-dot" style="background:${p.color}"></span>${escapeHtml(p.name)}</span>`;
+                })
+                .replace(/\{c:(\d+)\}/g, (m, id) => {
+                    const cell = board[parseInt(id, 10)];
+                    if (!cell) return m;
+                    return `<span class="log-card"><span class="log-dot" style="background:${cellLogColor(cell)}"></span>${escapeHtml(cell.name)}</span>`;
+                });
+        }
+
+        function categorize(text) {
+            if (/🎰|казино|ДЖЕКПОТ|ВЫИГРЫШ/.test(text)) return "casino";
+            if (/🏆|Победитель|Игра окончена/i.test(text)) return "other";
+            if (/🤝|💝|торопит|подарил|предложение|сделка|отклонил|отменил/i.test(text)) return "trade";
+            if (/🛠/.test(text)) return "debug";
+            if (/тюрь|🔑|освоб|вышел из тюрьмы/i.test(text)) return "jail";
+            if (/бросил|прошёл Старт|выбросил дубль|ходит снова/i.test(text)) return "roll";
+            if (/купил|продал/i.test(text)) return "buy";
+            if (/построил|снёс/i.test(text)) return "build";
+            if (/заплатил|получил|обанкрот|ремонт/i.test(text)) return "pay";
+            if (/вытянул|Банк выплачивает/i.test(text)) return "card";
+            return "other";
+        }
+
+        function formatTime(ts) {
+            if (!ts) return "—";
+            const d = new Date(ts);
+            return d.toLocaleTimeString();
+        }
+
+        function render() {
+            const showTime = $("show-time").checked;
+            const filterText = $("filter-text").value.toLowerCase();
+            const enabledCats = new Set();
+            document.querySelectorAll(".cat").forEach((cb) => {
+                if (cb.checked) enabledCats.add(cb.dataset.cat);
+            });
+
+            const list = $("log-list");
+            const rows = rawLog.filter((e) => {
+                const text = e.text || e;
+                const cat = categorize(text);
+                if (!enabledCats.has(cat)) return false;
+                if (filterText && !text.toLowerCase().includes(filterText)) return false;
+                return true;
+            });
+
+            $("stat-bar").innerText = `Показано: ${rows.length} из ${rawLog.length}`;
+
+            if (rows.length === 0) {
+                list.innerHTML = `<div class="empty">Нет событий по заданным фильтрам</div>`;
+                return;
+            }
+
+            list.innerHTML = rows.map((e) => {
+                const text = e.text || e;
+                const ts = e.ts;
+                const timeHtml = showTime ? `<span class="log-time">${formatTime(ts)}</span>` : "";
+                return `<div class="log-row">${timeHtml}<span class="log-text">${formatText(text)}</span></div>`;
+            }).join("");
+        }
+
+        function fetchLog() {
+            socket.emit("log:fetch", {}, (res) => {
+                if (!res || res.error) {
+                    $("log-list").innerHTML = `<div class="empty">${res?.error || "Ошибка загрузки."}</div>`;
+                    return;
+                }
+                rawLog = res.log || [];
+                players = res.players || [];
+                board = res.board || [];
+                groupColors = res.groupColors || {};
+                render();
+            });
+        }
+
+        const lobbyId = sessionStorage.getItem("lobbyId");
+        const me = JSON.parse(sessionStorage.getItem("me") || "null");
+        socket.on("connect", () => {
+            if (lobbyId && me) {
+                socket.emit("lobby:rejoin", { lobbyId, playerName: me.name });
+            }
+            setTimeout(fetchLog, 300);
+        });
+
+        $("filter-text").oninput = render;
+        $("show-time").onchange = render;
+        document.querySelectorAll(".cat").forEach((cb) => cb.onchange = render);
+        $("refresh-btn").onclick = fetchLog;
+    </script>
+</body>
+</html>
