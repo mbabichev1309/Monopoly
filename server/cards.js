@@ -1,7 +1,8 @@
 const CHANCE_CARDS = [
     { text: "Отправляйтесь на Старт. Получите $200.", action: { type: "move", position: 0, collectOnPass: true } },
-    { text: "Пройдите на Лондон.", action: { type: "move", position: 34, collectOnPass: true } },
-    { text: "Пройдите на Нью-Йорк.", action: { type: "move", position: 39, collectOnPass: true } },
+    { text: "Пройдите на случайную тёмно-синюю улицу.", action: { type: "move-random-group", group: "darkblue", collectOnPass: true } },
+    { text: "Пройдите на случайную зелёную улицу.", action: { type: "move-random-group", group: "green", collectOnPass: true } },
+    { text: "Пройдите на случайную оранжевую улицу.", action: { type: "move-random-group", group: "orange", collectOnPass: true } },
     { text: "Пройдите к ближайшей транспортной компании.", action: { type: "move-nearest", target: "railroad", collectOnPass: true } },
     { text: "Банк выплачивает дивиденды $50.", action: { type: "collect", amount: 50 } },
     { text: "Штраф за превышение скорости $15.", action: { type: "pay", amount: 15 } },

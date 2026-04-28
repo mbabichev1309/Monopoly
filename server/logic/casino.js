@@ -6,8 +6,7 @@ const MIN_BET = CFG.casino.minBet;
 const MAX_BET = CFG.casino.maxBet || 500;
 const TRIPLE = CFG.casino.tripleMultipliers;
 const PAIR = CFG.casino.pairMultipliers;
-const JACKPOT_SYMBOL = CFG.casino.jackpotPairSymbol;
-const JACKPOT_BONUS_MULT = CFG.casino.jackpotBonusMultiplier;
+const JACKPOT_TRIPLE_SYMBOL = CFG.casino.jackpotTripleSymbol;
 
 function accept(game, player, data) {
     if (!game.pendingAction || game.pendingAction.type !== "casino-offer") {
@@ -135,6 +134,7 @@ function roll(game) {
             matchedSymbol = sym;
             matchCount = 3;
             multiplier = TRIPLE[sym] || 0;
+            if (sym === JACKPOT_TRIPLE_SYMBOL) isJackpotWin = true;
             break;
         }
     }
@@ -143,8 +143,7 @@ function roll(game) {
             if (count === 2) {
                 matchedSymbol = sym;
                 matchCount = 2;
-                if (sym === JACKPOT_SYMBOL) isJackpotWin = true;
-                else multiplier = PAIR[sym] || 0;
+                multiplier = PAIR[sym] || 0;
                 break;
             }
         }
@@ -153,12 +152,7 @@ function roll(game) {
     let result;
     if (isJackpotWin) {
         const n = winnerIds.length;
-        const avgBet = totalBet / n;
-        const bonusPerPlayer = avgBet > game.jackpot
-            ? Math.floor((avgBet - game.jackpot) * JACKPOT_BONUS_MULT)
-            : 0;
-        const totalBonus = bonusPerPlayer * n;
-        const prize = Math.floor((totalBet + game.jackpot + totalBonus) * winMult);
+        const prize = Math.floor((totalBet + game.jackpot) * multiplier * winMult);
         const perWinner = Math.floor(prize / n);
         for (const pid of winnerIds) {
             const p = game.players.find((pp) => pp.id === pid);
@@ -169,9 +163,8 @@ function roll(game) {
             }
         }
         game.jackpot = 0;
-        result = { win: true, jackpotWin: true, prize, perWinner, bonusPerPlayer, matchedSymbol, matchCount, winnerIds };
-        const bonusMsg = bonusPerPlayer > 0 ? ` (+$${bonusPerPlayer} бонус за превышение)` : "";
-        game.logMsg(`🎰 ${slots.join(" ")} — 💎💎 ДЖЕКПОТ! каждому по $${perWinner}${bonusMsg}.`);
+        result = { win: true, jackpotWin: true, prize, perWinner, bonusPerPlayer: 0, multiplier, matchedSymbol, matchCount, winnerIds };
+        game.logMsg(`🎰 ${slots.join(" ")} — 💎💎💎 ДЖЕКПОТ! (ставка + джекпот) ×${multiplier}, каждому по $${perWinner}.`);
     } else if (multiplier > 0) {
         const prize = Math.floor(totalBet * multiplier * winMult);
         const perWinner = Math.floor(prize / winnerIds.length);

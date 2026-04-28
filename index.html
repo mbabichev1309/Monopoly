@@ -5,20 +5,44 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Monopoly — Меню</title>
     <link rel="stylesheet" href="src/style.css">
+    <script src="script/i18n.js"></script>
 </head>
 <body>
     <div id="main">
         <div id="greeting">
-            <h1>Монополия онлайн</h1>
+            <h1 data-i18n="menu_title">Монополия онлайн</h1>
         </div>
 
         <div id="menu-buttons">
-            <button id="btn-new" class="menu-btn"><h3>🎲 Новая игра</h3></button>
-            <button id="btn-join" class="menu-btn"><h3>🔑 Присоединиться</h3></button>
+            <button id="btn-new" class="menu-btn"><h3 data-i18n="menu_new_game">🎲 Новая игра</h3></button>
+            <button id="btn-join" class="menu-btn"><h3 data-i18n="menu_join">🔑 Присоединиться</h3></button>
+        </div>
+
+        <div id="lang-picker" style="margin-top: 18px; text-align: center;">
+            <label data-i18n="language_label">Язык</label>:
+            <select id="lang-select"></select>
         </div>
     </div>
 
     <script>
+        (async () => {
+            const dict = await I18N.load("lobby");
+            const sel = document.getElementById("lang-select");
+            for (const lang of I18N.languages()) {
+                const langDict = await fetch(`/locales/${lang}/lobby.json`).then(r => r.json()).catch(() => ({}));
+                const opt = document.createElement("option");
+                opt.value = lang;
+                opt.textContent = langDict.language || lang;
+                if (lang === I18N.getLang()) opt.selected = true;
+                sel.appendChild(opt);
+            }
+            sel.onchange = () => {
+                I18N.setLang(sel.value);
+                location.reload();
+            };
+            I18N.applyTranslations(document, dict);
+        })();
+
         document.getElementById("btn-new").onclick = () => {
             window.location.href = "new_game.html";
         };

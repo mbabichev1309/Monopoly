@@ -6,25 +6,27 @@
     <title>Monopoly — Присоединиться</title>
     <link rel="stylesheet" href="src/style.css">
     <script src="/socket.io/socket.io.js"></script>
+    <script src="script/i18n.js"></script>
 </head>
 <body>
     <div id="main">
         <div id="greeting">
-            <h1>Присоединиться</h1>
+            <h1 data-i18n="join_title">Присоединиться</h1>
         </div>
 
         <div class="lobby-form">
-            <h3>Код лобби: <input type="text" id="join-code" maxlength="5" style="text-transform:uppercase"></h3>
-            <h3>Твоё имя: <input type="text" id="join-name" maxlength="16"></h3>
-            <h3>Цвет: <input type="color" id="join-color"></h3>
-            <button id="btn-join"><h4>Войти</h4></button>
-            <button id="btn-back" class="secondary-btn"><h4>← Назад в меню</h4></button>
+            <h3><span data-i18n="join_code">Код лобби</span>: <input type="text" id="join-code" maxlength="5" style="text-transform:uppercase"></h3>
+            <h3><span data-i18n="join_name">Твоё имя</span>: <input type="text" id="join-name" maxlength="16"></h3>
+            <h3><span data-i18n="join_color">Цвет</span>: <input type="color" id="join-color"></h3>
+            <button id="btn-join"><h4 data-i18n="join_btn">Войти</h4></button>
+            <button id="btn-back" class="secondary-btn"><h4 data-i18n="back_to_menu">← Назад в меню</h4></button>
         </div>
 
         <div id="error-message"></div>
     </div>
 
     <script>
+        I18N.load("lobby").then(dict => I18N.applyTranslations(document, dict));
         const socket = io();
 
         function randomColor() {
@@ -69,6 +71,13 @@
             sessionStorage.setItem("me", JSON.stringify(you));
             sessionStorage.setItem("isHost", "0");
             window.location.href = "lobby.html";
+        });
+
+        socket.on("lobby:returned", ({ lobbyId, you }) => {
+            sessionStorage.setItem("lobbyId", lobbyId);
+            sessionStorage.setItem("me", JSON.stringify(you));
+            sessionStorage.setItem("isHost", "0");
+            window.location.href = "game.html";
         });
 
         socket.on("lobby:error", ({ message }) => {

@@ -5,6 +5,8 @@ const os = require("os");
 
 const LobbyManager = require("./server/LobbyManager");
 const CFG = require("./server/config");
+const presets = require("./server/presets");
+const debugLogic = require("./server/logic/debug");
 
 const debugUsers = CFG.debug.users || [];
 console.log(`[debug] загружено учёток: ${debugUsers.length}`);
@@ -21,6 +23,10 @@ const lobbyManager = new LobbyManager(io);
 
 io.on("connection", (socket) => {
     console.log(`[+] connected: ${socket.id}`);
+
+    socket.on("presets:list", (data, cb) => {
+        if (typeof cb === "function") cb(presets.list());
+    });
 
     socket.on("lobby:create", (data) => {
         lobbyManager.createLobby(socket, data);
@@ -155,6 +161,67 @@ io.on("connection", (socket) => {
         lobbyManager.handleGameAction(socket, "debug", data);
     });
 
+    socket.on("debug:list-lobbies", (data, cb) => {
+        if (!debugAuthSockets.has(socket.id)) {
+            return typeof cb === "function" && cb({ error: "Не авторизован" });
+        }
+        const list = [];
+        for (const [id, lobby] of lobbyManager.lobbies) {
+            list.push({
+                id,
+                state: lobby.state,
+                players: lobby.players.map((p) => p.name),
+                count: lobby.players.length,
+                max: lobby.maxPlayers,
+                mode: lobby.mode,
+                preset: lobby.preset,
+            });
+        }
+        if (typeof cb === "function") cb({ lobbies: list });
+    });
+
+    socket.on("debug:run", (data, cb) => {
+        if (!debugAuthSockets.has(socket.id)) {
+            return typeof cb === "function" && cb({ error: "Не авторизован" });
+        }
+        const { lobbyId, cmd } = data || {};
+        const lobby = lobbyManager.lobbies.get(lobbyId);
+        if (!lobby || !lobby.game) {
+            return typeof cb === "function" && cb({ error: "Лобби не найдено или игра не запущена" });
+        }
+        const isReadOnly = !cmd || !cmd.cmd || cmd.cmd === "info" || cmd.cmd === "noop";
+        let result = { events: [] };
+        if (!isReadOnly) {
+            const fakePlayer = lobby.game.players[0];
+            try {
+                result = debugLogic.run(lobby.game, fakePlayer, cmd);
+            } catch (e) {
+                console.error("[debug] crash:", e);
+                return typeof cb === "function" && cb({ error: `Сервер упал: ${e.message}` });
+            }
+            if (result.error) {
+                return typeof cb === "function" && cb({ error: result.error });
+            }
+            io.to(lobbyId).emit("game:state", lobby.game.getPublicState());
+        }
+        const snapshot = {
+            players: lobby.game.players.map((p) => ({
+                id: p.id,
+                name: p.name,
+                balance: p.balance,
+                position: p.position,
+                cell: lobby.game.board[p.position]?.name,
+                bankrupt: p.bankrupt,
+                left: p.left,
+                inJail: p.inJail,
+            })),
+            currentPlayerId: lobby.game.players[lobby.game.currentPlayerIndex].id,
+            jackpot: lobby.game.jackpot,
+            phase: lobby.game.phase,
+        };
+        if (typeof cb === "function") cb({ ok: true, state: snapshot });
+    });
+
     socket.on("trade:gift-money", (data) => {
         lobbyManager.handleGameAction(socket, "giftMoney", data);
     });
@@ -185,6 +252,14 @@ io.on("connection", (socket) => {
 
     socket.on("game:leave", () => {
         lobbyManager.handleLeave(socket);
+    });
+
+    socket.on("chat:send", (data) => {
+        lobbyManager.handleChat(socket, data);
+    });
+
+    socket.on("lobby:delete", () => {
+        lobbyManager.deleteLobby(socket);
     });
 
     socket.on("disconnect", () => {

@@ -54,6 +54,9 @@ function pass(game, player) {
     const a = game.auction;
     if (!a.participantIds.includes(player.id)) return { error: "Ты не участник." };
     if (a.passedIds.includes(player.id)) return { error: "Уже пас." };
+    if (a.currentBidderId === player.id) {
+        return { error: "Ты ведущий — отказаться нельзя. Жди, пока перебьют." };
+    }
 
     a.passedIds.push(player.id);
     game.logMsg(`{p:${player.id}} отказался от аукциона.`);

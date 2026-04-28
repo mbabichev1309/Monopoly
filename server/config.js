@@ -37,7 +37,7 @@ const limits = load("limits", {
     hurryLapCooldown: 2,
     lobbyCodeLength: 5,
     lobbyMinPlayers: 2,
-    lobbyMaxPlayers: 6,
+    lobbyMaxPlayers: 8,
 });
 
 const debug = load("debug", { users: [] });

@@ -1,6 +1,32 @@
 const GameState = require("./GameState");
 const CFG = require("./config");
 
+const MIN_COLOR_DISTANCE = 90;
+
+function hexToRgb(hex) {
+    const m = String(hex || "").replace("#", "");
+    if (m.length < 6) return { r: 128, g: 128, b: 128 };
+    return {
+        r: parseInt(m.substring(0, 2), 16),
+        g: parseInt(m.substring(2, 4), 16),
+        b: parseInt(m.substring(4, 6), 16),
+    };
+}
+
+function colorDistance(hex1, hex2) {
+    const c1 = hexToRgb(hex1);
+    const c2 = hexToRgb(hex2);
+    const rMean = (c1.r + c2.r) / 2;
+    const dr = c1.r - c2.r;
+    const dg = c1.g - c2.g;
+    const db = c1.b - c2.b;
+    return Math.sqrt(
+        (2 + rMean / 256) * dr * dr +
+        4 * dg * dg +
+        (2 + (255 - rMean) / 256) * db * db
+    );
+}
+
 function generateLobbyId() {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     let id = "";
@@ -17,18 +43,13 @@ class LobbyManager {
         this.socketToLobby = new Map();
     }
 
-    createLobby(socket, { maxPlayers, playerName, playerColor, mode, modifiers, features }) {
-        const max = parseInt(maxPlayers, 10);
-        const MIN = CFG.limits.lobbyMinPlayers;
+    createLobby(socket, { playerName, playerColor, mode, modifiers, features, preset }) {
         const MAX = CFG.limits.lobbyMaxPlayers;
-        if (isNaN(max) || max < MIN || max > MAX) {
-            socket.emit("lobby:error", { message: `Количество игроков должно быть от ${MIN} до ${MAX}.` });
-            return;
-        }
         if (!playerName || !playerName.trim()) {
             socket.emit("lobby:error", { message: "Укажи имя." });
             return;
         }
+        const max = MAX;
 
         const validMode = CFG.modes[mode] ? mode : "classic";
         const validModifiers = Array.isArray(modifiers)
@@ -51,6 +72,7 @@ class LobbyManager {
             mode: validMode,
             modifiers: validModifiers,
             features: validFeatures,
+            preset: typeof preset === "string" ? preset : "main",
             players: [{
                 socketId: socket.id,
                 name: playerName.trim(),
@@ -75,16 +97,53 @@ class LobbyManager {
             socket.emit("lobby:error", { message: "Лобби не найдено." });
             return;
         }
-        if (lobby.state !== "waiting") {
-            socket.emit("lobby:error", { message: "Игра уже началась." });
+        if (!playerName || !playerName.trim()) {
+            socket.emit("lobby:error", { message: "Укажи имя." });
+            return;
+        }
+        const trimmedName = playerName.trim();
+
+        if (lobby.state === "playing" && lobby.game) {
+            const gp = lobby.game.players.find((p) => p.name === trimmedName);
+            if (gp && gp.left && !gp.bankrupt) {
+                const oldSocketId = gp.socketId;
+                gp.socketId = socket.id;
+                lobby.game.returnToGame(gp);
+                const lp = lobby.players.find((p) => p.name === trimmedName);
+                if (lp) lp.socketId = socket.id;
+                if (lobby.hostSocketId === oldSocketId) lobby.hostSocketId = socket.id;
+                this.socketToLobby.set(socket.id, lobbyId);
+                socket.join(lobbyId);
+                socket.emit("lobby:returned", { lobbyId, you: { name: gp.name, color: gp.color, slot: lp?.slot ?? gp.id + 1 } });
+                this.io.to(lobbyId).emit("game:state", lobby.game.getPublicState());
+                return;
+            }
+            if (gp && gp.bankrupt) {
+                socket.emit("lobby:error", { message: "Этот игрок уже банкрот — возврат невозможен." });
+                return;
+            }
+            socket.emit("lobby:error", { message: "Игра уже началась. Войти можно только тем, кто играл и вышел." });
             return;
         }
         if (lobby.players.length >= lobby.maxPlayers) {
             socket.emit("lobby:error", { message: "Лобби заполнено." });
             return;
         }
-        if (!playerName || !playerName.trim()) {
-            socket.emit("lobby:error", { message: "Укажи имя." });
+        const nameTaken = lobby.players.some(
+            (p) => p.name.toLowerCase() === trimmedName.toLowerCase()
+        );
+        if (nameTaken) {
+            socket.emit("lobby:error", { message: "Игрок с таким именем уже в лобби. Возьми другое имя." });
+            return;
+        }
+        const requestedColor = playerColor || "#ffffff";
+        const colorClash = lobby.players.find(
+            (p) => colorDistance(p.color, requestedColor) < MIN_COLOR_DISTANCE
+        );
+        if (colorClash) {
+            socket.emit("lobby:error", {
+                message: `Слишком похожий цвет на цвет игрока ${colorClash.name}. Выбери более контрастный.`,
+            });
             return;
         }
 
@@ -94,8 +153,8 @@ class LobbyManager {
 
         const player = {
             socketId: socket.id,
-            name: playerName.trim(),
-            color: playerColor || "#ffffff",
+            name: trimmedName,
+            color: requestedColor,
             slot,
         };
 
@@ -137,6 +196,9 @@ class LobbyManager {
         } else if (lobby.state === "playing" && lobby.game) {
             socket.emit("game:state", lobby.game.getPublicState());
         }
+        if (lobby.chatLog && lobby.chatLog.length) {
+            socket.emit("chat:history", lobby.chatLog);
+        }
     }
 
     broadcastLobbyUpdate(lobbyId) {
@@ -150,6 +212,7 @@ class LobbyManager {
             mode: lobby.mode || "classic",
             modifiers: lobby.modifiers || [],
             features: lobby.features || { casino: true, auction: true },
+            preset: lobby.preset || "main",
             players: lobby.players.map((p) => ({
                 socketId: p.socketId,
                 name: p.name,
@@ -181,6 +244,7 @@ class LobbyManager {
             mode: lobby.mode || "classic",
             modifiers: lobby.modifiers || [],
             features: lobby.features || { casino: true, auction: true },
+            preset: lobby.preset || "main",
         });
 
         this.io.to(lobbyId).emit("game:start", { lobbyId });
@@ -246,6 +310,48 @@ class LobbyManager {
             // В playing state НЕ помечаем как left автоматически —
             // только по явному событию game:leave (кнопка или закрытие вкладки).
         }, CFG.game.disconnectGracePeriodMs);
+    }
+
+    handleChat(socket, data) {
+        const lobbyId = this.socketToLobby.get(socket.id);
+        if (!lobbyId) return;
+        const lobby = this.lobbies.get(lobbyId);
+        if (!lobby) return;
+        const text = String(data?.text || "").trim().slice(0, 200);
+        if (!text) return;
+
+        let name, color, id;
+        if (lobby.game) {
+            const gp = lobby.game.players.find((p) => p.socketId === socket.id);
+            if (!gp) return;
+            id = gp.id; name = gp.name; color = gp.color;
+        } else {
+            const lp = lobby.players.find((p) => p.socketId === socket.id);
+            if (!lp) return;
+            id = lp.slot; name = lp.name; color = lp.color;
+        }
+
+        const msg = { id, name, color, text, ts: Date.now() };
+        if (!lobby.chatLog) lobby.chatLog = [];
+        lobby.chatLog.push(msg);
+        if (lobby.chatLog.length > 200) lobby.chatLog.shift();
+        this.io.to(lobbyId).emit("chat:message", msg);
+    }
+
+    deleteLobby(socket) {
+        const lobbyId = this.socketToLobby.get(socket.id);
+        if (!lobbyId) return;
+        const lobby = this.lobbies.get(lobbyId);
+        if (!lobby) return;
+        if (lobby.hostSocketId !== socket.id) {
+            socket.emit("game:error", { message: "Только хост может удалить комнату." });
+            return;
+        }
+        this.io.to(lobbyId).emit("lobby:deleted");
+        this.lobbies.delete(lobbyId);
+        for (const [sid, lid] of this.socketToLobby) {
+            if (lid === lobbyId) this.socketToLobby.delete(sid);
+        }
     }
 
     handleLeave(socket) {

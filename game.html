@@ -6,34 +6,54 @@
     <title>Монополия</title>
     <link rel="stylesheet" href="src/game.css">
     <script src="/socket.io/socket.io.js"></script>
+    <script src="script/i18n.js"></script>
     <script type="module" src="script/main.js" defer></script>
 </head>
 <body>
 
+    <div class="resizer" id="resizer-left" title="Перетащи · двойной клик — сбросить"></div>
+    <div class="resizer" id="resizer-right" title="Перетащи · двойной клик — сбросить"></div>
+
     <div class="display-border" id="card-display">
         <div id="card">
-            <div class="card-empty">Нажми на клетку поля или игрока</div>
+            <div class="card-empty" data-i18n="card_empty">Нажми на клетку поля или игрока</div>
         </div>
-        <button id="exit-to-menu-btn">← Выйти в меню</button>
+        <div class="card-bottom-bar">
+            <button id="exit-to-menu-btn" data-i18n="btn_exit_menu">← Выйти в меню</button>
+            <button id="delete-lobby-btn" style="display:none" data-i18n-title="btn_delete_room_title">🗑️</button>
+            <span id="lobby-code-badge" title="Код лобби"></span>
+        </div>
     </div>
 
-    <div class="display-border" id="main">
-        <canvas id="main-canvas" width="900" height="900"></canvas>
+    <div class="center-column">
+        <div class="display-border" id="main">
+            <canvas id="main-canvas" width="900" height="900"></canvas>
+        </div>
+        <div class="display-border" id="chat-panel">
+            <div class="chat-panel-header">
+                <button id="chat-expand-btn" type="button" data-i18n-title="chat_expand_title">▲</button>
+                <span id="chat-unread-badge" style="display:none">0</span>
+            </div>
+            <div id="chat-messages"></div>
+            <form id="chat-input-row" autocomplete="off">
+                <input id="chat-input" type="text" maxlength="200" data-i18n-placeholder="chat_placeholder" />
+                <button id="chat-send-btn" type="submit" data-i18n-title="chat_send_title">▶</button>
+            </form>
+        </div>
     </div>
 
     <div class="right-column">
         <div class="display-border" id="player-list">
-            <h1>Игроки</h1>
+            <h1 data-i18n="panel_players">Игроки</h1>
             <div id="players-container"></div>
-            <h2 class="log-title">Лог событий</h2>
+            <h2 class="log-title" data-i18n="panel_log">Лог событий</h2>
             <div id="event-log"></div>
-            <button id="open-history-btn" class="toggle-btn" style="margin-top:8px">📖 Полная история</button>
+            <button id="open-history-btn" class="toggle-btn" style="margin-top:8px" data-i18n="panel_history_btn">📖 Полная история</button>
         </div>
 
         <div class="display-border" id="own-cards">
             <div class="own-cards-header">
-                <h3>Мои карты</h3>
-                <button id="own-cards-toggle" class="toggle-btn">Развернуть ▲</button>
+                <h3 data-i18n="panel_my_cards">Мои карты</h3>
             </div>
             <div id="own-cards-list"></div>
         </div>
@@ -43,10 +63,10 @@
                 <canvas id="dice-canvas" width="180" height="70"></canvas>
             </div>
             <div class="dice-btns">
-                <button id="roll-dice-button"><h4>Бросить</h4></button>
-                <button id="end-turn-button"><h4>Конец хода</h4></button>
+                <button id="roll-dice-button"><h4 data-i18n="btn_roll">Бросить</h4></button>
+                <button id="end-turn-button"><h4 data-i18n="btn_end_turn">Конец хода</h4></button>
             </div>
-            <button id="use-jail-card-button" style="display:none; margin-top:8px">🔑 Использовать карту освобождения</button>
+            <button id="use-jail-card-button" style="display:none; margin-top:8px" data-i18n="btn_use_jail_card">🔑 Использовать карту освобождения</button>
         </div>
     </div>
 

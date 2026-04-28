@@ -7,7 +7,8 @@ export default class Monopoly {
         this.step = this.width / 11;
         this.cornerSize = this.step;
 
-        this.stripePattern = this.buildStripePattern();
+        this.stripePattern = this.buildStripePattern("rgba(0,0,0,0.9)");
+        this.stripePatternLight = this.buildStripePattern("rgba(255,255,255,0.85)");
 
         this.displayPositions = {};
         this.animationsInFlight = {};
@@ -20,6 +21,7 @@ export default class Monopoly {
         this.centerOverlay = { topText: null, bottomText: null, topOverride: null, topOverrideUntil: 0 };
 
         this.attentionCell = null;
+        this.tradeHighlights = { red: new Set(), green: new Set() };
         this.innerInfo = { jackpot: 0, round: 1 };
     }
 
@@ -129,6 +131,35 @@ export default class Monopoly {
         return `rgb(${r},${g},${b})`;
     }
 
+    drawTradeHighlights(now) {
+        if (!this.tradeHighlights) return;
+        const { red, green } = this.tradeHighlights;
+        if ((!red || red.size === 0) && (!green || green.size === 0)) return;
+        const ctx = this.ctx;
+        const drawGlow = (cellId, color) => {
+            const rect = this.getCellRect(cellId);
+            ctx.save();
+            const pulse = 0.5 + 0.5 * Math.sin(now / 380);
+            const maxExpand = rect.w * 0.3;
+            for (let i = 0; i < 2; i++) {
+                const phase = ((now / 1400 + i * 0.5) % 1);
+                const expand = phase * maxExpand;
+                const alpha = (1 - phase) * 0.55;
+                ctx.strokeStyle = this.hexToRgba(color, alpha);
+                ctx.lineWidth = 3;
+                ctx.strokeRect(rect.x - expand, rect.y - expand, rect.w + expand * 2, rect.h + expand * 2);
+            }
+            ctx.fillStyle = this.hexToRgba(color, 0.18 + pulse * 0.18);
+            ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+            ctx.lineWidth = 4;
+            ctx.strokeStyle = this.hexToRgba(color, 0.85);
+            ctx.strokeRect(rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2);
+            ctx.restore();
+        };
+        if (red) for (const cid of red) drawGlow(cid, "#d62828");
+        if (green) for (const cid of green) drawGlow(cid, "#2ecc40");
+    }
+
     drawAttentionWaves(now) {
         if (!this.attentionCell) return;
         const { cellId, color, waitForPlayerId } = this.attentionCell;
@@ -153,13 +184,13 @@ export default class Monopoly {
         ctx.restore();
     }
 
-    buildStripePattern() {
+    buildStripePattern(strokeColor = "rgba(0,0,0,0.9)") {
         const size = 18;
         const off = document.createElement("canvas");
         off.width = size;
         off.height = size;
         const c = off.getContext("2d");
-        c.strokeStyle = "rgba(0,0,0,0.9)";
+        c.strokeStyle = strokeColor;
         c.lineWidth = 3.5;
         for (let i = -size; i < size * 2; i += 7) {
             c.beginPath();
@@ -168,6 +199,17 @@ export default class Monopoly {
             c.stroke();
         }
         return off;
+    }
+
+    isDarkColor(hex) {
+        if (!hex) return false;
+        const m = hex.replace("#", "");
+        if (m.length < 6) return false;
+        const r = parseInt(m.substring(0, 2), 16);
+        const g = parseInt(m.substring(2, 4), 16);
+        const b = parseInt(m.substring(4, 6), 16);
+        const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+        return luminance < 128;
     }
 
     getCellRect(index) {
@@ -198,12 +240,19 @@ export default class Monopoly {
         return { x: 0, y: 0, w: s, h: s, side: "corner" };
     }
 
-    startMoveAnimation(playerId, fromPos, toPos, { delay = 0, durationPerStep = 200 } = {}) {
+    startMoveAnimation(playerId, fromPos, toPos, { delay = 0, durationPerStep = 200, backward = false } = {}) {
         if (fromPos === toPos) return;
-        let steps = (toPos - fromPos + 40) % 40;
-        if (steps === 0) steps = 40;
         const path = [];
-        for (let i = 0; i <= steps; i++) path.push((fromPos + i) % 40);
+        let steps;
+        if (backward) {
+            steps = (fromPos - toPos + 40) % 40;
+            if (steps === 0) steps = 40;
+            for (let i = 0; i <= steps; i++) path.push(((fromPos - i) % 40 + 40) % 40);
+        } else {
+            steps = (toPos - fromPos + 40) % 40;
+            if (steps === 0) steps = 40;
+            for (let i = 0; i <= steps; i++) path.push((fromPos + i) % 40);
+        }
         this.animationsInFlight[playerId] = {
             path,
             startTime: performance.now() + delay,
@@ -504,9 +553,11 @@ export default class Monopoly {
                 ctx.fillRect(ox, oy, ow, oh);
 
                 ctx.save();
-                const pattern = ctx.createPattern(this.stripePattern, "repeat");
+                const dark = this.isDarkColor(ownerColor);
+                const patternSrc = dark ? this.stripePatternLight : this.stripePattern;
+                const pattern = ctx.createPattern(patternSrc, "repeat");
                 ctx.fillStyle = pattern;
-                ctx.globalAlpha = 0.4;
+                ctx.globalAlpha = dark ? 0.55 : 0.4;
                 ctx.fillRect(ox, oy, ow, oh);
                 ctx.restore();
 
@@ -541,16 +592,142 @@ export default class Monopoly {
         }
         ctx.restore();
 
-        if (own && own.ownerId !== null && own.ownerId !== undefined) {
-            ctx.fillStyle = "#1a1208";
-            ctx.font = `${Math.floor(w * 0.14)}px sans-serif`;
-            ctx.textAlign = "left";
-            if (own.hotel) {
-                ctx.fillText("🏨", x + 6, y + h * 0.35);
-            } else if (own.houses > 0) {
-                ctx.fillText(`🏠×${own.houses}`, x + 6, y + h * 0.35);
+        if (own && (own.houses > 0 || own.hotel) && cell.type === "property") {
+            this.drawBuildings(x, y, w, h, side, own.houses, own.hotel);
+        }
+    }
+
+    drawBuildings(x, y, w, h, side, houses, hotel) {
+        const ctx = this.ctx;
+        const t = 0.22;
+        let bx, by, bw, bh;
+        if (side === "bottom") { bx = x; by = y; bw = w; bh = h * t; }
+        else if (side === "top") { bx = x; by = y + h * (1 - t); bw = w; bh = h * t; }
+        else if (side === "left") { bx = x + w * (1 - t); by = y; bw = w * t; bh = h; }
+        else if (side === "right") { bx = x; by = y; bw = w * t; bh = h; }
+        else return;
+
+        const vertical = side === "left" || side === "right";
+        const alongLen = vertical ? bh : bw;
+        const acrossLen = vertical ? bw : bh;
+
+        if (hotel) {
+            const hW = alongLen * 0.34;
+            const hH = acrossLen * 0.5;
+            if (vertical) {
+                const hx = bx + (bw - hH) / 2;
+                const hy = by + (bh - hW) / 2;
+                this.drawHotel(hx, hy, hH, hW, true);
+            } else {
+                const hx = bx + (bw - hW) / 2;
+                const hy = by + (bh - hH) / 2;
+                this.drawHotel(hx, hy, hW, hH, false);
+            }
+            return;
+        }
+
+        if (houses > 0) {
+            const count = Math.min(houses, 4);
+            const hThick = acrossLen * 0.42;
+            const padding = acrossLen * 0.1;
+            const itemSize = acrossLen * 0.42;
+            const totalLen = itemSize * count + (count - 1) * itemSize * 0.25;
+            const startOffset = (alongLen - totalLen) / 2;
+            const gap = itemSize * 0.25;
+            const hLen = itemSize;
+
+            for (let i = 0; i < count; i++) {
+                if (vertical) {
+                    const hx = bx + (bw - hThick) / 2;
+                    const hy = by + startOffset + i * (hLen + gap);
+                    this.drawHouse(hx, hy, hThick, hLen, true);
+                } else {
+                    const hx = bx + startOffset + i * (hLen + gap);
+                    const hy = by + (bh - hThick) / 2;
+                    this.drawHouse(hx, hy, hLen, hThick, false);
+                }
             }
         }
+    }
+
+    drawHouse(x, y, w, h, vertical) {
+        const ctx = this.ctx;
+        ctx.save();
+        const roofH = (vertical ? w : h) * 0.35;
+
+        if (vertical) {
+            ctx.fillStyle = "#1c7a3a";
+            ctx.fillRect(x, y + roofH, w, h - roofH);
+            ctx.fillStyle = "#0f4a23";
+            ctx.beginPath();
+            ctx.moveTo(x, y + roofH);
+            ctx.lineTo(x + w / 2, y);
+            ctx.lineTo(x + w, y + roofH);
+            ctx.closePath();
+            ctx.fill();
+            ctx.strokeStyle = "#072914";
+            ctx.lineWidth = 1;
+            ctx.strokeRect(x, y + roofH, w, h - roofH);
+            ctx.beginPath();
+            ctx.moveTo(x, y + roofH);
+            ctx.lineTo(x + w / 2, y);
+            ctx.lineTo(x + w, y + roofH);
+            ctx.stroke();
+        } else {
+            ctx.fillStyle = "#1c7a3a";
+            ctx.fillRect(x, y + roofH, w, h - roofH);
+            ctx.fillStyle = "#0f4a23";
+            ctx.beginPath();
+            ctx.moveTo(x, y + roofH);
+            ctx.lineTo(x + w / 2, y);
+            ctx.lineTo(x + w, y + roofH);
+            ctx.closePath();
+            ctx.fill();
+            ctx.strokeStyle = "#072914";
+            ctx.lineWidth = 1;
+            ctx.strokeRect(x, y + roofH, w, h - roofH);
+            ctx.beginPath();
+            ctx.moveTo(x, y + roofH);
+            ctx.lineTo(x + w / 2, y);
+            ctx.lineTo(x + w, y + roofH);
+            ctx.stroke();
+        }
+        ctx.restore();
+    }
+
+    drawHotel(x, y, w, h, vertical) {
+        const ctx = this.ctx;
+        ctx.save();
+        const roofH = (vertical ? w : h) * 0.3;
+
+        ctx.fillStyle = "#c9302c";
+        ctx.fillRect(x, y + roofH, w, h - roofH);
+        ctx.fillStyle = "#7a1c1a";
+        ctx.beginPath();
+        ctx.moveTo(x, y + roofH);
+        ctx.lineTo(x + w / 2, y);
+        ctx.lineTo(x + w, y + roofH);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.strokeStyle = "#3d0f0e";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x, y + roofH, w, h - roofH);
+        ctx.beginPath();
+        ctx.moveTo(x, y + roofH);
+        ctx.lineTo(x + w / 2, y);
+        ctx.lineTo(x + w, y + roofH);
+        ctx.stroke();
+
+        ctx.fillStyle = "#fff";
+        const fontSize = Math.max(6, Math.min(w, h - roofH) * 0.55);
+        ctx.font = `900 ${fontSize}px sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.shadowColor = "rgba(0, 0, 0, 0.5)";
+        ctx.shadowBlur = 2;
+        ctx.fillText("H", x + w / 2, y + roofH + (h - roofH) / 2);
+        ctx.restore();
     }
 
     drawCellLabel(cell, cx, cy, w) {
@@ -679,6 +856,17 @@ export default class Monopoly {
             ctx.lineWidth = 1;
             ctx.stroke();
 
+            ctx.restore();
+
+            const initial = (p.name || "?").trim().charAt(0).toUpperCase();
+            ctx.save();
+            ctx.font = `800 ${Math.round(tr * 1.05)}px Cinzel, serif`;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillStyle = this.isDarkColor(p.color) ? "#ffffff" : "#1a1208";
+            ctx.shadowColor = "rgba(0, 0, 0, 0.45)";
+            ctx.shadowBlur = 2;
+            ctx.fillText(initial, tx, ty + 1);
             ctx.restore();
         }
     }

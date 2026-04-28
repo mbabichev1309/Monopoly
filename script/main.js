@@ -1,5 +1,17 @@
 import Monopoly from "./Monopoly.js";
 
+let LOC = {};
+window.I18N.load("game").then((dict) => {
+    LOC = dict;
+    window.I18N.applyTranslations(document, dict);
+});
+function t(key, params) {
+    let s = LOC[key];
+    if (s === undefined) return key;
+    if (params) for (const k in params) s = s.replace(new RegExp(`\\{${k}\\}`, "g"), params[k]);
+    return s;
+}
+
 const socket = io();
 
 const lobbyId = sessionStorage.getItem("lobbyId");
@@ -19,7 +31,6 @@ const monopoly = new Monopoly(canvas, ctx);
 let state = null;
 let selectedCardId = null;
 let selectedPlayerId = null;
-let ownCardsExpanded = false;
 let offerBuilderTargetId = null;
 let offerBuilderMyProps = new Set();
 let offerBuilderTheirProps = new Set();
@@ -44,6 +55,101 @@ socket.on("connect", () => {
     socket.emit("lobby:rejoin", { lobbyId, playerName: me.name });
 });
 
+const chatPanelEl = $("chat-panel");
+const chatMessagesEl = $("chat-messages");
+const chatInputEl = $("chat-input");
+const chatFormEl = $("chat-input-row");
+const chatBadgeEl = $("chat-unread-badge");
+
+let chatUnreadCount = 0;
+let chatActive = false;
+
+function setChatUnread(count) {
+    chatUnreadCount = count;
+    if (!chatPanelEl) return;
+    if (count > 0) {
+        chatPanelEl.classList.add("has-unread");
+        if (chatBadgeEl) {
+            chatBadgeEl.innerText = count > 99 ? "99+" : String(count);
+            chatBadgeEl.style.display = "flex";
+        }
+    } else {
+        chatPanelEl.classList.remove("has-unread");
+        if (chatBadgeEl) chatBadgeEl.style.display = "none";
+    }
+}
+
+function clearChatUnread() {
+    setChatUnread(0);
+}
+
+function appendChatMessage(msg, opts = {}) {
+    if (!chatMessagesEl) return;
+    const div = document.createElement("div");
+    div.className = "chat-msg";
+    if (opts.fresh) div.classList.add("fresh");
+    const nameSpan = document.createElement("span");
+    nameSpan.className = "chat-msg-name";
+    nameSpan.style.color = msg.color || "#d4af37";
+    nameSpan.innerText = msg.name + ":";
+    const textSpan = document.createElement("span");
+    textSpan.className = "chat-msg-text";
+    textSpan.innerText = " " + msg.text;
+    div.appendChild(nameSpan);
+    div.appendChild(textSpan);
+    chatMessagesEl.appendChild(div);
+    chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+    if (opts.fresh) {
+        setTimeout(() => div.classList.remove("fresh"), 2400);
+    }
+}
+
+if (chatFormEl) {
+    chatFormEl.addEventListener("submit", (e) => {
+        e.preventDefault();
+        const text = chatInputEl.value.trim();
+        if (!text) return;
+        socket.emit("chat:send", { text });
+        chatInputEl.value = "";
+    });
+}
+if (chatInputEl) {
+    chatInputEl.addEventListener("focus", () => {
+        chatActive = true;
+        clearChatUnread();
+    });
+    chatInputEl.addEventListener("blur", () => {
+        chatActive = false;
+    });
+}
+if (chatPanelEl) {
+    chatPanelEl.addEventListener("click", clearChatUnread);
+}
+
+const chatExpandBtn = $("chat-expand-btn");
+if (chatExpandBtn && chatPanelEl) {
+    chatExpandBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const expanded = chatPanelEl.classList.toggle("expanded");
+        chatExpandBtn.innerText = expanded ? "▼" : "▲";
+        if (chatMessagesEl) chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+    });
+}
+
+socket.on("chat:message", (msg) => {
+    const myId = me?.name === msg.name;
+    appendChatMessage(msg, { fresh: !myId });
+    if (!myId && !chatActive) {
+        setChatUnread(chatUnreadCount + 1);
+    }
+});
+socket.on("chat:history", (msgs) => {
+    if (!chatMessagesEl) return;
+    chatMessagesEl.innerHTML = "";
+    for (const m of msgs) appendChatMessage(m);
+    clearChatUnread();
+});
+
 socket.on("game:state", (newState) => {
     const prevState = state;
     state = newState;
@@ -52,7 +158,8 @@ socket.on("game:state", (newState) => {
             const prev = prevState.players.find((pp) => pp.id === p.id);
             if (prev && prev.position !== p.position && !p.bankrupt) {
                 const delay = diceAnimation ? 1000 : 0;
-                monopoly.startMoveAnimation(p.id, prev.position, p.position, { delay, durationPerStep: 200 });
+                const backward = state.lastMoveDirection === "backward";
+                monopoly.startMoveAnimation(p.id, prev.position, p.position, { delay, durationPerStep: 200, backward });
             }
             if (prev && prev.balance !== p.balance) {
                 pendingBalanceDeltas.push({ pid: p.id, delta: p.balance - prev.balance });
@@ -94,7 +201,7 @@ socket.on("game:rolled", ({ dice }) => {
 socket.on("game:hurry", ({ toId, fromName }) => {
     const myPlayer = state?.players.find((p) => p.socketId === socket.id);
     if (myPlayer && toId === myPlayer.id) {
-        monopoly.setCenterTopOverride("ПОТОРОПИТЕСЬ!", 2500);
+        monopoly.setCenterTopOverride(t("watermark_hurry"), 2500);
     }
 });
 
@@ -116,7 +223,7 @@ socket.on("game:error", ({ message }) => {
 });
 
 socket.on("game:over", ({ winnerName }) => {
-    alert(`Игра окончена! Победитель: ${winnerName}`);
+    alert(t("alert_game_over", { name: winnerName }));
 });
 
 $("roll-dice-button").onclick = () => socket.emit("game:roll");
@@ -129,8 +236,71 @@ if (historyBtn) {
     historyBtn.onclick = () => window.open("log.html", "_blank");
 }
 
+const lobbyCodeBadge = $("lobby-code-badge");
+if (lobbyCodeBadge && lobbyId) lobbyCodeBadge.innerText = lobbyId;
+
+const isHost = sessionStorage.getItem("isHost") === "1";
+const deleteLobbyBtn = $("delete-lobby-btn");
+if (deleteLobbyBtn && isHost) {
+    deleteLobbyBtn.style.display = "";
+    deleteLobbyBtn.onclick = () => {
+        if (!confirm(t("confirm_delete_room"))) return;
+        socket.emit("lobby:delete");
+    };
+}
+
+(function setupResizers() {
+    const root = document.documentElement;
+    const KEY = "monopoly:side-w";
+    const minW = 200, maxW = 600;
+
+    const saved = localStorage.getItem(KEY);
+    if (saved) root.style.setProperty("--side-w", saved);
+
+    function bindResizer(el, side) {
+        if (!el) return;
+        el.addEventListener("mousedown", (e) => {
+            e.preventDefault();
+            el.classList.add("dragging");
+            document.body.style.cursor = "ew-resize";
+            document.body.style.userSelect = "none";
+            const onMove = (ev) => {
+                const x = ev.clientX;
+                const w = side === "left" ? x - 15 : window.innerWidth - x - 15;
+                const clamped = Math.max(minW, Math.min(maxW, w));
+                root.style.setProperty("--side-w", clamped + "px");
+            };
+            const onUp = () => {
+                el.classList.remove("dragging");
+                document.body.style.cursor = "";
+                document.body.style.userSelect = "";
+                const w = root.style.getPropertyValue("--side-w").trim();
+                if (w) localStorage.setItem(KEY, w);
+                window.removeEventListener("mousemove", onMove);
+                window.removeEventListener("mouseup", onUp);
+            };
+            window.addEventListener("mousemove", onMove);
+            window.addEventListener("mouseup", onUp);
+        });
+        el.addEventListener("dblclick", () => {
+            root.style.removeProperty("--side-w");
+            localStorage.removeItem(KEY);
+        });
+    }
+    bindResizer($("resizer-left"), "left");
+    bindResizer($("resizer-right"), "right");
+})();
+
+socket.on("lobby:deleted", () => {
+    sessionStorage.removeItem("lobbyId");
+    sessionStorage.removeItem("me");
+    sessionStorage.removeItem("isHost");
+    alert(t("alert_room_deleted"));
+    window.location.replace("index.html");
+});
+
 $("exit-to-menu-btn").onclick = () => {
-    if (!confirm("Выйти из игры? Твои данные будут потеряны.")) return;
+    if (!confirm(t("exit_confirm"))) return;
     socket.emit("game:leave");
     sessionStorage.removeItem("lobbyId");
     sessionStorage.removeItem("me");
@@ -184,8 +354,8 @@ function render() {
 
     let topText = null;
     if (state.phase === "ended") topText = null;
-    else if (canEndTurn) topText = "ЗАВЕРШИТЕ ХОД";
-    else if (isMyTurn && state.phase === "roll") topText = "ВАШ ХОД";
+    else if (canEndTurn) topText = t("watermark_end_turn");
+    else if (isMyTurn && state.phase === "roll") topText = t("watermark_your_turn");
     monopoly.centerOverlay.topText = topText;
 
     monopoly.centerOverlay.bottomText = computeBottomNotif(myPlayer, isMyTurn);
@@ -194,10 +364,11 @@ function render() {
     if (!myIncomingOffer) viewingOffer = false;
 
     updateAttentionCell(myPlayer, isMyTurn);
+    updateTradeHighlights(myPlayer);
     if (pa?.type === "roll-again" && isMyTurn) {
-        $("end-turn-button").querySelector("h4").innerText = "Ходить снова";
+        $("end-turn-button").querySelector("h4").innerText = t("btn_roll_again");
     } else {
-        $("end-turn-button").querySelector("h4").innerText = "Конец хода";
+        $("end-turn-button").querySelector("h4").innerText = t("btn_end_turn");
     }
 
     renderPlayerList(myPlayer);
@@ -215,6 +386,7 @@ function boardFrame() {
     monopoly.setInnerInfo({ jackpot: state.jackpot, round: state.roundNumber });
     monopoly.draw_map(state.board, state.groupColors, state.ownership, state.players);
     monopoly.drawInnerDecor();
+    monopoly.drawTradeHighlights(now);
     monopoly.drawAttentionWaves(now);
     monopoly.draw_tokens(state.players, state.currentPlayerId, now);
     drawDice(now);
@@ -377,17 +549,19 @@ function renderPlayerList(myPlayer) {
         if (hasOfferFromMe) div.classList.add("has-pending-offer");
 
         const isMe = myPlayer && p.id === myPlayer.id;
-        const meBadge = isMe ? `<span class="me-badge">Я</span>` : "";
-        const swatch = `<span class="color-swatch" style="background:${p.color}"></span>`;
+        const meBadge = isMe ? `<span class="me-badge">${t("tag_me")}</span>` : "";
+        const initials = getInitials(p.name);
+        const textColor = isDarkHex(p.color) ? "#fff" : "#1a1208";
+        const swatch = `<span class="player-avatar" style="background:${p.color};color:${textColor}">${escapeHtml(initials)}</span>`;
 
         let statusTag = "";
-        if (p.bankrupt) statusTag = ' <span class="player-tag tag-bankrupt">банкрот</span>';
-        else if (p.left) statusTag = ' <span class="player-tag tag-left">вышел</span>';
-        else if (p.id === state.currentPlayerId && state.phase !== "ended") statusTag = ' <span class="active-player">Ходит</span>';
+        if (p.bankrupt) statusTag = ` <span class="player-tag tag-bankrupt">${t("tag_bankrupt")}</span>`;
+        else if (p.left) statusTag = ` <span class="player-tag tag-left">${t("tag_left")}</span>`;
+        else if (p.id === state.currentPlayerId && state.phase !== "ended") statusTag = ` <span class="active-player">${t("tag_turn")}</span>`;
 
-        const jailBadge = p.inJail && !p.bankrupt && !p.left ? ' <span class="player-tag tag-jail">в тюрьме</span>' : "";
-        const goojfBadge = (p.freeJailCards || 0) > 0 ? ` <span class="player-tag tag-key" title="Карт освобождения из тюрьмы">🔑${p.freeJailCards}</span>` : "";
-        const buildBadge = (p.buildAnywhereTokens || 0) > 0 ? ` <span class="player-tag tag-build" title="Разрешений на постройку">🏗${p.buildAnywhereTokens}</span>` : "";
+        const jailBadge = p.inJail && !p.bankrupt && !p.left ? ` <span class="player-tag tag-jail">${t("tag_jail")}</span>` : "";
+        const goojfBadge = (p.freeJailCards || 0) > 0 ? ` <span class="player-tag tag-key" title="${t("title_jail_cards")}">🔑${p.freeJailCards}</span>` : "";
+        const buildBadge = (p.buildAnywhereTokens || 0) > 0 ? ` <span class="player-tag tag-build" title="${t("title_build_tokens")}">🏗${p.buildAnywhereTokens}</span>` : "";
 
         const isMuted = myPlayer && (myPlayer.mutedIds || []).includes(p.id);
 
@@ -396,8 +570,8 @@ function renderPlayerList(myPlayer) {
             const isCurrent = p.id === state.currentPlayerId;
             controlsHtml = `
                 <div class="player-controls">
-                    <button class="player-ctrl-btn mute-btn ${isMuted ? 'muted' : ''}" data-pid="${p.id}" data-act="mute" title="${isMuted ? 'Размутить' : 'Замутить предложения'}">${isMuted ? '🔇' : '🔔'}</button>
-                    <button class="player-ctrl-btn hurry-btn" data-pid="${p.id}" data-act="hurry" title="Поторопить ход" ${isCurrent ? '' : 'disabled'}>⏰</button>
+                    <button class="player-ctrl-btn mute-btn ${isMuted ? 'muted' : ''}" data-pid="${p.id}" data-act="mute" title="${isMuted ? t('title_mute_on') : t('title_mute_off')}">${isMuted ? '🔇' : '🔔'}</button>
+                    <button class="player-ctrl-btn hurry-btn" data-pid="${p.id}" data-act="hurry" title="${t('title_hurry')}" ${isCurrent ? '' : 'disabled'}>⏰</button>
                 </div>
             `;
         }
@@ -435,7 +609,7 @@ function renderEventLog() {
     const container = $("event-log");
     if (!container) return;
     const wasAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 30;
-    const log = state.log || [];
+    const log = (state.log || []).slice(-30);
     container.innerHTML = log.map((e) => {
         const text = typeof e === "string" ? e : e.text;
         const cat = categorizeLog(text);
@@ -500,27 +674,47 @@ function computeBottomNotif(myPlayer, isMyTurn) {
 
     if (isMyTurn && pa && (pa.type === "pay-rent" || pa.type === "pay-tax")
         && myPlayer.balance < pa.amount && myPlayer.properties.length > 0) {
-        return "💼 У ВАС ЕСТЬ ИМУЩЕСТВО";
+        return t("notif_have_property");
     }
 
     if (recentGiftNotif && (performance.now() - recentGiftNotif.at) < 4000) {
-        return `🎁 ${recentGiftNotif.fromName}: +$${recentGiftNotif.amount}`;
+        return t("notif_gift_received", { name: recentGiftNotif.fromName, amount: recentGiftNotif.amount });
     }
     const offer = state.pendingOffers?.[myPlayer.id];
     if (offer) {
         const sender = state.players.find((p) => p.id === offer.fromId);
-        return `💌 Предложение от ${sender ? sender.name : "?"}`;
+        return t("notif_offer_from", { name: sender ? sender.name : "?" });
     }
     if (state.auction
         && state.auction.participantIds.includes(myPlayer.id)
         && !state.auction.passedIds.includes(myPlayer.id)) {
         const cell = state.board[state.auction.cardId];
-        return `🔨 Аукцион: ${cell.name}`;
+        return t("notif_auction", { name: cell.name });
     }
     if (isMyTurn && pa && ["buy-option", "pay-rent", "pay-tax", "card-draw", "casino-offer"].includes(pa.type)) {
-        return "⚠ Ожидается действие";
+        return t("notif_action_required");
     }
     return null;
+}
+
+function updateTradeHighlights(myPlayer) {
+    const red = new Set();
+    const green = new Set();
+    if (!myPlayer) {
+        monopoly.tradeHighlights = { red, green };
+        return;
+    }
+    if (offerBuilderTargetId !== null && offerBuilderTargetId !== undefined) {
+        for (const cid of offerBuilderMyProps) red.add(cid);
+        for (const cid of offerBuilderTheirProps) green.add(cid);
+    } else if (viewingOffer) {
+        const offer = state.pendingOffers?.[myPlayer.id];
+        if (offer) {
+            if (Array.isArray(offer.theirProps)) for (const cid of offer.theirProps) red.add(cid);
+            if (Array.isArray(offer.myProps)) for (const cid of offer.myProps) green.add(cid);
+        }
+    }
+    monopoly.tradeHighlights = { red, green };
 }
 
 function updateAttentionCell(myPlayer, isMyTurn) {
@@ -589,19 +783,8 @@ function cellLogColor(cell) {
 
 function renderOwnCards(myPlayer) {
     const list = $("own-cards-list");
-    const wrapper = $("own-cards");
     list.innerHTML = "";
-    wrapper.classList.toggle("expanded", ownCardsExpanded);
-
     if (!myPlayer) return;
-
-    const toggle = $("own-cards-toggle");
-    if (myPlayer.properties.length > 0) {
-        toggle.style.display = "";
-        toggle.innerText = ownCardsExpanded ? "Свернуть ▼" : "Развернуть ▲";
-    } else {
-        toggle.style.display = "none";
-    }
 
     for (const cid of myPlayer.properties) {
         const cell = state.board[cid];
@@ -624,6 +807,36 @@ function renderOwnCards(myPlayer) {
         list.appendChild(btn);
     }
 }
+
+(function preserveInputsOnRerender() {
+    const cardEl = $("card");
+    const desc = Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML");
+    Object.defineProperty(cardEl, "innerHTML", {
+        get() { return desc.get.call(cardEl); },
+        set(val) {
+            const saved = {};
+            cardEl.querySelectorAll("input[id]").forEach((el) => {
+                saved[el.id] = {
+                    value: el.value,
+                    focused: document.activeElement === el,
+                    start: el.selectionStart,
+                    end: el.selectionEnd,
+                };
+            });
+            desc.set.call(cardEl, val);
+            for (const id in saved) {
+                const el = cardEl.querySelector(`#${CSS.escape(id)}`);
+                if (!el) continue;
+                el.value = saved[id].value;
+                if (saved[id].focused) {
+                    el.focus();
+                    try { el.setSelectionRange(saved[id].start, saved[id].end); } catch (e) {}
+                }
+            }
+        },
+        configurable: true,
+    });
+})();
 
 function renderCardDisplay(myPlayer, isMyTurn) {
     const card = $("card");
@@ -684,7 +897,7 @@ function renderCardDisplay(myPlayer, isMyTurn) {
     }
 
     if (cardId === null || cardId === undefined) {
-        card.innerHTML = `<div class="card-empty">Нажми на клетку поля или игрока</div>`;
+        card.innerHTML = `<div class="card-empty">${t("card_empty")}</div>`;
         return;
     }
 
@@ -708,96 +921,78 @@ function renderCellView(card, cardId, myPlayer, isMyTurn) {
         : (typeColors[cell.type] || "#555");
 
     const cardTypeLabels = {
-        property: "Улица",
-        railroad: "Аэропорт",
-        utility: "Коммунальная",
-        tax: "Налог",
-        chance: "Шанс",
-        community: "Казна",
-        casino: "Казино",
-        corner: "Угловая",
+        property: t("card_type_property"),
+        railroad: t("card_type_railroad"),
+        utility: t("card_type_utility"),
+        tax: t("card_type_tax"),
+        chance: t("card_type_chance"),
+        community: t("card_type_community"),
+        casino: t("card_type_casino"),
+        corner: t("card_type_corner"),
     };
+
+    const rentMult = state.rentMultiplier || 1;
+    const rm = (n) => Math.floor(n * rentMult);
+    const formatMult = (m) => Math.abs(m - Math.round(m)) < 0.001 ? String(Math.round(m)) : m.toFixed(2).replace(/\.?0+$/, "");
+    const rentHintHtml = rentMult !== 1
+        ? `<div class="rent-mult-hint">${t("rent_mult_hint", { mult: formatMult(rentMult) })}</div>`
+        : "";
 
     let rentHtml = "";
     if (cell.type === "property") {
         rentHtml = `
+            ${rentHintHtml}
             <div class="rent-section">
-                <div class="rent-row"><span>Базовая</span><b>$${cell.rent[0]}</b></div>
-                <div class="rent-row"><span>1 дом</span><b>$${cell.rent[1]}</b></div>
-                <div class="rent-row"><span>2 дома</span><b>$${cell.rent[2]}</b></div>
-                <div class="rent-row"><span>3 дома</span><b>$${cell.rent[3]}</b></div>
-                <div class="rent-row"><span>4 дома</span><b>$${cell.rent[4]}</b></div>
-                <div class="rent-row"><span>Отель</span><b>$${cell.rent[5]}</b></div>
+                <div class="rent-row"><span>${t("rent_base")}</span><b>$${rm(cell.rent[0])}</b></div>
+                <div class="rent-row"><span>${t("rent_house_n", { n: 1 })}</span><b>$${rm(cell.rent[1])}</b></div>
+                <div class="rent-row"><span>${t("rent_houses_n", { n: 2 })}</span><b>$${rm(cell.rent[2])}</b></div>
+                <div class="rent-row"><span>${t("rent_houses_n", { n: 3 })}</span><b>$${rm(cell.rent[3])}</b></div>
+                <div class="rent-row"><span>${t("rent_houses_n", { n: 4 })}</span><b>$${rm(cell.rent[4])}</b></div>
+                <div class="rent-row"><span>${t("rent_hotel")}</span><b>$${rm(cell.rent[5])}</b></div>
             </div>
         `;
     } else if (cell.type === "railroad") {
         rentHtml = `
+            ${rentHintHtml}
             <div class="rent-section">
-                <div class="rent-row"><span>1 вокзал</span><b>$${cell.rent[0]}</b></div>
-                <div class="rent-row"><span>2 вокзала</span><b>$${cell.rent[1]}</b></div>
-                <div class="rent-row"><span>3 вокзала</span><b>$${cell.rent[2]}</b></div>
-                <div class="rent-row"><span>4 вокзала</span><b>$${cell.rent[3]}</b></div>
+                <div class="rent-row"><span>${t("rent_railroad_n", { n: 1 })}</span><b>$${rm(cell.rent[0])}</b></div>
+                <div class="rent-row"><span>${t("rent_railroad_n", { n: 2 })}</span><b>$${rm(cell.rent[1])}</b></div>
+                <div class="rent-row"><span>${t("rent_railroad_n", { n: 3 })}</span><b>$${rm(cell.rent[2])}</b></div>
+                <div class="rent-row"><span>${t("rent_railroad_n", { n: 4 })}</span><b>$${rm(cell.rent[3])}</b></div>
             </div>
         `;
     } else if (cell.type === "utility") {
-        rentHtml = `<div class="rent-section"><div class="rent-row"><span>Одна</span><b>×4 кубика</b></div><div class="rent-row"><span>Обе</span><b>×10 кубика</b></div></div>`;
+        rentHtml = `${rentHintHtml}<div class="rent-section"><div class="rent-row"><span>${t("rent_utility_one")}</span><b>${t("rent_x_dice", { n: formatMult(4 * rentMult) })}</b></div><div class="rent-row"><span>${t("rent_utility_both")}</span><b>${t("rent_x_dice", { n: formatMult(10 * rentMult) })}</b></div></div>`;
     } else if (cell.type === "tax") {
-        rentHtml = `<div class="rent-section"><div class="rent-row"><span>Налог</span><b>$${cell.amount}</b></div></div>`;
+        rentHtml = `<div class="rent-section"><div class="rent-row"><span>${t("rent_tax")}</span><b>$${cell.amount}</b></div></div>`;
     } else if (cell.type === "chance" || cell.type === "community") {
         const isMatching = state.lastDrawnCard && state.lastDrawnCard.type === cell.type;
-        const text = isMatching ? state.lastDrawnCard.text : "Вытяните карту, попав на эту клетку.";
+        const text = isMatching ? state.lastDrawnCard.text : t("card_draw_default");
         rentHtml = `<div class="card-drawn-text ${isMatching ? 'active' : ''}">${escapeHtml(text)}</div>`;
     } else if (cell.type === "casino") {
         if (state.features && state.features.casino === false) {
-            rentHtml = `<div class="card-drawn-text">🚫 В этой игре казино отключено.</div>`;
+            rentHtml = `<div class="card-drawn-text">${t("casino_disabled")}</div>`;
         } else {
-            rentHtml = `
-                <div class="card-drawn-text">
-                    🎰 Казино слот-машина. Сделай ставку и крути барабан из 3 слотов.
-                    Символы: 💎 алмаз, 👑 корона, ⭐ звезда, 🍒 вишня.
-                    Можно играть одному или позвать остальных.
-                    Не совпало — ставка уходит в джекпот. При 💎💎 джекпот твой + бонус, если ставка его превысила.
-                </div>
-            `;
+            rentHtml = `<div class="card-drawn-text">${t("casino_description")}</div>`;
         }
     } else if (cell.type === "corner") {
         if (cell.action === "go") {
-            rentHtml = `
-                <div class="card-drawn-text">
-                    🟢 Стартовая клетка. Каждый раз когда фишка проходит через Старт,
-                    игрок получает <b>+$200</b> за круг.
-                    Стрелка указывает направление движения.
-                </div>
-            `;
+            rentHtml = `<div class="card-drawn-text">${t("start_description")}</div>`;
         } else if (cell.action === "jail") {
-            rentHtml = `
-                <div class="card-drawn-text">
-                    🔒 Тюрьма. Если ты попал сюда обычным ходом — ты здесь
-                    <b>просто в гостях</b>, никакого эффекта.
-                    Сидишь в тюрьме только если сюда <b>отправляют</b>
-                    (карта "Иди в тюрьму", 3 дубля подряд или клетка "Иди в тюрьму").
-                </div>
-            `;
+            rentHtml = `<div class="card-drawn-text">${t("jail_description")}</div>`;
         } else if (cell.action === "go-to-jail") {
-            rentHtml = `
-                <div class="card-drawn-text">
-                    🚔 Попав сюда, фишка сразу <b>переходит в Тюрьму</b>.
-                    Старт не засчитывается, бонус не выдаётся.
-                    Чтобы выйти: дубль на кубиках, 3 хода + штраф $50,
-                    или карта "Освобождение".
-                </div>
-            `;
+            rentHtml = `<div class="card-drawn-text">${t("gotojail_description")}</div>`;
         }
     }
 
     let ownerHtml = "";
     if (own) {
         const ownerPlayer = state.players.find((p) => p.id === own.ownerId);
-        const ownerText = ownerPlayer ? `<span style="color:${ownerPlayer.color}">${escapeHtml(ownerPlayer.name)}</span>` : `<i>свободна</i>`;
+        const ownerText = ownerPlayer ? `<span style="color:${ownerPlayer.color}">${escapeHtml(ownerPlayer.name)}</span>` : `<i>${t("card_owner_free")}</i>`;
         ownerHtml = `
-            <div class="card-owner-line">Владелец: ${ownerText}</div>
+            <div class="card-owner-line">${t("card_owner")}: ${ownerText}</div>
             <div class="card-buildings">
-                ${own.hotel ? '🏨 Отель' : own.houses > 0 ? `🏠 Домов: ${own.houses}` : ''}
+                ${own.hotel ? t("card_hotel") : own.houses > 0 ? t("card_houses_count", { n: own.houses }) : ''}
             </div>
         `;
     }
@@ -809,18 +1004,18 @@ function renderCellView(card, cardId, myPlayer, isMyTurn) {
         if (cell.type === "property" && cell.housePrice) {
             extras = `
                 <div class="card-sub-price">
-                    <span>🏠 Дом: <b>$${cell.housePrice}</b></span>
-                    <span>🏨 Отель: <b>$${cell.housePrice}</b></span>
+                    <span>${t("card_house")}: <b>$${cell.housePrice}</b></span>
+                    <span>${t("card_hotel")}: <b>$${cell.housePrice}</b></span>
                 </div>
                 <div class="card-sub-price">
-                    <span>Продажа: <b>$${sellPrice}</b></span>
+                    <span>${t("card_sell")}: <b>$${sellPrice}</b></span>
                 </div>
             `;
         } else {
-            extras = `<div class="card-sub-price"><span>Продажа: <b>$${sellPrice}</b></span></div>`;
+            extras = `<div class="card-sub-price"><span>${t("card_sell")}: <b>$${sellPrice}</b></span></div>`;
         }
         priceHtml = `
-            <div class="card-price">Цена <b>$${cell.price}</b></div>
+            <div class="card-price">${t("card_price")} <b>$${cell.price}</b></div>
             ${extras}
         `;
     }
@@ -850,20 +1045,25 @@ function renderCellView(card, cardId, myPlayer, isMyTurn) {
 
     if (viewingPending) {
         if (pa.type === "buy-option") {
-            actions.appendChild(makeBtn(`Купить за $${pa.price}`, () => socket.emit("game:buy"), "primary"));
-            actions.appendChild(makeBtn("Отказаться", () => socket.emit("game:decline-buy"), "secondary"));
+            const buyBtn = makeBtn(t("btn_buy_for", { amount: pa.price }), () => socket.emit("game:buy"), "primary");
+            if (myPlayer && myPlayer.balance < pa.price) {
+                buyBtn.disabled = true;
+                buyBtn.title = t("tooltip_cannot_afford");
+            }
+            actions.appendChild(buyBtn);
+            actions.appendChild(makeBtn(t("btn_decline"), () => socket.emit("game:decline-buy"), "secondary"));
             return;
         }
         if (pa.type === "card-draw") {
-            actions.appendChild(makeBtn("Принять", () => socket.emit("game:accept-card"), "primary"));
+            actions.appendChild(makeBtn(t("btn_accept_card"), () => socket.emit("game:accept-card"), "primary"));
             return;
         }
         if (pa.type === "pay-tax") {
-            actions.appendChild(makeBtn(`Заплатить $${pa.amount}`, () => socket.emit("game:accept-pay"), "secondary"));
+            actions.appendChild(makeBtn(t("btn_pay_for", { amount: pa.amount }), () => socket.emit("game:accept-pay"), "secondary"));
             return;
         }
         if (pa.type === "pay-rent") {
-            actions.appendChild(makeBtn(`Заплатить аренду $${pa.amount}`, () => socket.emit("game:accept-pay"), "secondary"));
+            actions.appendChild(makeBtn(t("btn_pay_rent_for", { amount: pa.amount }), () => socket.emit("game:accept-pay"), "secondary"));
             return;
         }
     }
@@ -871,7 +1071,7 @@ function renderCellView(card, cardId, myPlayer, isMyTurn) {
     if (state.auction && myPlayer
         && state.auction.participantIds.includes(myPlayer.id)
         && !state.auction.passedIds.includes(myPlayer.id)) {
-        actions.appendChild(makeBtn("← К аукциону", () => {
+        actions.appendChild(makeBtn(t("btn_to_auction"), () => {
             selectedCardId = null;
             selectedPlayerId = null;
             render();
@@ -880,23 +1080,33 @@ function renderCellView(card, cardId, myPlayer, isMyTurn) {
 
     if (own && own.ownerId === myPlayer?.id && cell.type === "property") {
         const refund = Math.floor(cell.housePrice / 2);
-        if (!own.hotel && own.houses < 4) {
-            actions.appendChild(makeBtn(`Купить дом ($${cell.housePrice})`, () => {
+        const myCell = state.board[myPlayer.position];
+        const standingOnGroup = myCell && myCell.type === "property" && myCell.group === cell.group;
+        const hasBuildToken = (myPlayer.buildAnywhereTokens || 0) > 0;
+        const canBuild = standingOnGroup || hasBuildToken;
+        if (!own.hotel && own.houses < 4 && canBuild) {
+            const label = !standingOnGroup && hasBuildToken
+                ? t("btn_buy_house_token_for", { amount: cell.housePrice })
+                : t("btn_buy_house_for", { amount: cell.housePrice });
+            actions.appendChild(makeBtn(label, () => {
                 socket.emit("game:buy-house", { cardId });
             }));
         }
-        if (!own.hotel && own.houses === 4) {
-            actions.appendChild(makeBtn(`Купить отель ($${cell.housePrice})`, () => {
+        if (!own.hotel && own.houses === 4 && canBuild) {
+            const label = !standingOnGroup && hasBuildToken
+                ? t("btn_buy_hotel_token_for", { amount: cell.housePrice })
+                : t("btn_buy_hotel_for", { amount: cell.housePrice });
+            actions.appendChild(makeBtn(label, () => {
                 socket.emit("game:buy-hotel", { cardId });
             }));
         }
         if (own.houses > 0 && !own.hotel) {
-            actions.appendChild(makeBtn(`Снести дом (+$${refund})`, () => {
+            actions.appendChild(makeBtn(t("btn_demolish_house_for", { amount: refund }), () => {
                 socket.emit("game:sell-house", { cardId });
             }, "secondary"));
         }
         if (own.hotel) {
-            actions.appendChild(makeBtn(`Снести отель (+$${refund})`, () => {
+            actions.appendChild(makeBtn(t("btn_demolish_hotel_for", { amount: refund }), () => {
                 socket.emit("game:sell-hotel", { cardId });
             }, "secondary"));
         }
@@ -915,10 +1125,10 @@ function addSellWithLock(actions, cardId, refund, locked) {
     wrap.className = "sell-lock-wrap";
 
     const sellBtn = makeBtn(
-        locked ? `🔒 Продать за $${refund}` : `Продать за $${refund}`,
+        locked ? t("btn_sell_locked_for", { amount: refund }) : t("btn_sell_for", { amount: refund }),
         () => {
             if (locked) {
-                alert("Сначала открой замочек.");
+                alert(t("alert_unlock_first"));
                 return;
             }
             socket.emit("game:sell", { cardId });
@@ -926,12 +1136,12 @@ function addSellWithLock(actions, cardId, refund, locked) {
         "secondary"
     );
     sellBtn.classList.toggle("is-locked", locked);
-    if (locked) sellBtn.title = "Продажа заблокирована. Открой замочек.";
+    if (locked) sellBtn.title = t("title_unlock_warn");
 
     const lockBtn = document.createElement("button");
     lockBtn.className = `lock-btn ${locked ? "closed" : "open"}`;
     lockBtn.innerText = locked ? "🔒" : "🔓";
-    lockBtn.title = locked ? "Открыть замок" : "Закрыть замок";
+    lockBtn.title = locked ? t("title_open_lock") : t("title_close_lock");
     lockBtn.onclick = () => socket.emit("game:toggle-lock", { cardId });
 
     wrap.appendChild(sellBtn);
@@ -942,15 +1152,15 @@ function addSellWithLock(actions, cardId, refund, locked) {
 function renderPlayerView(card, playerId, myPlayer) {
     const player = state.players.find((p) => p.id === playerId);
     if (!player) {
-        card.innerHTML = `<div class="card-empty">Игрок не найден</div>`;
+        card.innerHTML = `<div class="card-empty">${t("card_empty_player_not_found")}</div>`;
         return;
     }
 
     const isMe = myPlayer && player.id === myPlayer.id;
     const status = [];
-    if (player.bankrupt) status.push('<span class="player-tag tag-bankrupt">банкрот</span>');
-    if (player.inJail) status.push('<span class="player-tag tag-jail">в тюрьме</span>');
-    if (player.id === state.currentPlayerId) status.push('<span class="player-tag tag-turn">ходит</span>');
+    if (player.bankrupt) status.push(`<span class="player-tag tag-bankrupt">${t("tag_bankrupt")}</span>`);
+    if (player.inJail) status.push(`<span class="player-tag tag-jail">${t("tag_jail")}</span>`);
+    if (player.id === state.currentPlayerId) status.push(`<span class="player-tag tag-turn">${t("tag_turn")}</span>`);
 
     let propsHtml = "";
     if (player.properties.length > 0) {
@@ -965,7 +1175,7 @@ function renderPlayerView(card, playerId, myPlayer) {
         }).join("");
         propsHtml = `<div class="player-view-props">${items}</div>`;
     } else {
-        propsHtml = `<div class="player-view-empty">Нет собственности</div>`;
+        propsHtml = `<div class="player-view-empty">${t("player_view_no_props")}</div>`;
     }
 
     let offerBtnHtml = "";
@@ -973,8 +1183,8 @@ function renderPlayerView(card, playerId, myPlayer) {
     if (!isMe && incomingOffer && incomingOffer.fromId === player.id) {
         offerBtnHtml = `
             <div class="offer-alert">
-                <span>💌 Этот игрок прислал тебе предложение</span>
-                <button class="card-action-btn primary" id="btn-view-offer">Перейти к предложению</button>
+                <span>${t("player_view_offer_msg")}</span>
+                <button class="card-action-btn primary" id="btn-view-offer">${t("btn_view_offer")}</button>
             </div>
         `;
     }
@@ -987,18 +1197,18 @@ function renderPlayerView(card, playerId, myPlayer) {
         const remaining = Math.max(0, limits.maxPerRecipient - alreadyToThis);
         const defaultVal = Math.min(50, remaining) || 1;
         tradeHtml = `
-            <h3 class="player-view-section-title">Действия</h3>
+            <h3 class="player-view-section-title">${t("player_view_actions")}</h3>
             <div class="trade-block">
                 <div class="trade-row">
-                    <label>Подарить деньги:</label>
+                    <label>${t("trade_gift_label")}</label>
                     <input type="number" id="gift-money-input" min="1" max="${remaining}" value="${defaultVal}" step="10">
                     <button class="card-action-btn primary" id="btn-gift-money" ${remaining <= 0 ? "disabled" : ""}>
-                        Подарить
+                        ${t("btn_gift")}
                     </button>
                 </div>
-                <div class="trade-hint">Подарено: $${alreadyToThis} / $${limits.maxPerRecipient} · осталось $${remaining}</div>
+                <div class="trade-hint">${t("trade_gift_hint", { given: alreadyToThis, max: limits.maxPerRecipient, remaining })}</div>
                 <button class="card-action-btn secondary" id="btn-open-offer" style="width:100%;margin-top:8px">
-                    Предложить сделку
+                    ${t("btn_send_offer")}
                 </button>
             </div>
         `;
@@ -1008,23 +1218,23 @@ function renderPlayerView(card, playerId, myPlayer) {
         && state.auction.participantIds.includes(myPlayer.id)
         && !state.auction.passedIds.includes(myPlayer.id);
     const auctionReturnHtml = amInAuction
-        ? `<button id="player-view-return-auction" class="card-action-btn primary" style="width:100%;margin-top:10px">← К аукциону</button>`
+        ? `<button id="player-view-return-auction" class="card-action-btn primary" style="width:100%;margin-top:10px">${t("btn_to_auction")}</button>`
         : "";
 
     card.innerHTML = `
         <div class="card-header player-view-header" style="background:${player.color}">
-            <div class="card-type-label">Игрок${isMe ? " (ты)" : ""}</div>
+            <div class="card-type-label">${isMe ? t("card_type_player_me") : t("card_type_player")}</div>
             <h1>${escapeHtml(player.name)}</h1>
         </div>
         <div class="card-body">
             <div class="player-view-balance">$${player.balance}</div>
             <div class="player-view-status">${status.join(" ") || "&nbsp;"}</div>
-            <h3 class="player-view-section-title">Собственность (${player.properties.length})</h3>
+            <h3 class="player-view-section-title">${t("player_view_section_props", { n: player.properties.length })}</h3>
             ${propsHtml}
             ${offerBtnHtml}
             ${tradeHtml}
             ${auctionReturnHtml}
-            <button id="player-view-close" class="secondary" style="margin-top:15px;width:100%">Закрыть</button>
+            <button id="player-view-close" class="secondary" style="margin-top:15px;width:100%">${t("btn_close")}</button>
         </div>
     `;
 
@@ -1098,11 +1308,11 @@ function renderVictoryView(card) {
     const winner = state.players.find((p) => p.id === state.winnerId);
     const byBankOrder = (state.bankruptcyOrder || []).slice();
     const placings = [];
-    if (winner) placings.push({ player: winner, place: 1, label: "🏆 Победитель" });
+    if (winner) placings.push({ player: winner, place: 1, label: t("victory_winner_label") });
     for (let i = byBankOrder.length - 1; i >= 0; i--) {
         const p = state.players.find((pp) => pp.id === byBankOrder[i]);
         if (!p) continue;
-        placings.push({ player: p, place: placings.length + 1, label: p.left ? "вышел" : "банкрот" });
+        placings.push({ player: p, place: placings.length + 1, label: p.left ? t("tag_left") : t("tag_bankrupt") });
     }
 
     const maxBalance = state.players.reduce((best, p) => (!best || p.balance > best.balance) ? p : best, null);
@@ -1131,11 +1341,11 @@ function renderVictoryView(card) {
 
     card.innerHTML = `
         <div class="card-header" style="background:${winner ? winner.color : "#b8860b"}">
-            <div class="card-type-label">🏆 Игра окончена</div>
-            <h1>${winner ? escapeHtml(winner.name) + " победил!" : "Финал"}</h1>
+            <div class="card-type-label">${t("victory_title")}</div>
+            <h1>${winner ? escapeHtml(winner.name) + " " + t("victory_winner_suffix") : t("victory_title")}</h1>
         </div>
         <div class="card-body">
-            <h3 class="player-view-section-title">Места</h3>
+            <h3 class="player-view-section-title">${t("victory_places")}</h3>
             <div class="victory-list">
                 ${placings.map((pl) => `
                     <div class="victory-row ${pl.place === 1 ? 'first' : ''}">
@@ -1146,44 +1356,44 @@ function renderVictoryView(card) {
                 `).join("")}
             </div>
 
-            <h3 class="player-view-section-title">Рекорды</h3>
+            <h3 class="player-view-section-title">${t("victory_records")}</h3>
             <div class="victory-stats">
                 <div class="victory-stat">
-                    <div class="vs-label">💰 Максимум на счету</div>
+                    <div class="vs-label">${t("victory_max_balance")}</div>
                     ${playerChip(maxBalance)}
                     <span class="vs-value">$${maxBalance?.balance || 0}</span>
                 </div>
                 <div class="victory-stat">
-                    <div class="vs-label">🏘️ Больше всего карт</div>
+                    <div class="vs-label">${t("victory_max_props")}</div>
                     ${playerChip(maxProps)}
                     <span class="vs-value">${maxProps?.properties?.length || 0}</span>
                 </div>
                 <div class="victory-stat">
-                    <div class="vs-label">🏰 Макс. капитализация</div>
+                    <div class="vs-label">${t("victory_max_cap")}</div>
                     ${playerChip(maxCapPlayer)}
                     <span class="vs-value">$${maxCap}</span>
                 </div>
             </div>
 
-            <h3 class="player-view-section-title">Статистика</h3>
+            <h3 class="player-view-section-title">${t("victory_stats")}</h3>
             <div class="victory-stats">
                 <div class="victory-stat">
-                    <div class="vs-label">🛍️ Купил больше всех карт</div>
+                    <div class="vs-label">${t("victory_top_bought")}</div>
                     ${playerChip(topBought.player)}
-                    <span class="vs-value">${topBought.value} шт.</span>
+                    <span class="vs-value">${topBought.value} ${t("victory_pcs")}</span>
                 </div>
                 <div class="victory-stat">
-                    <div class="vs-label">💸 Потратил больше всех</div>
+                    <div class="vs-label">${t("victory_top_spent")}</div>
                     ${playerChip(topSpent.player)}
                     <span class="vs-value">$${topSpent.value}</span>
                 </div>
                 <div class="victory-stat">
-                    <div class="vs-label">🎰 Выигрыш в казино</div>
+                    <div class="vs-label">${t("victory_top_casino")}</div>
                     ${playerChip(topCasino.player)}
                     <span class="vs-value">$${topCasino.value}</span>
                 </div>
                 <div class="victory-stat">
-                    <div class="vs-label">🏚️ Аренда и налоги</div>
+                    <div class="vs-label">${t("victory_top_rent")}</div>
                     ${playerChip(topRentTax.player)}
                     <span class="vs-value">$${topRentTax.value}</span>
                 </div>
@@ -1201,24 +1411,24 @@ function renderIncomingOffer(card, offer, _myPlayer) {
         return cids.map((cid) => {
             const cell = state.board[cid];
             const color = cell.group ? state.groupColors[cell.group] : "#888";
-            return `<button class="offer-prop-btn" data-cid="${cid}" style="border-left:5px solid ${color}" title="Посмотреть карту">${escapeHtml(cell.name)}</button>`;
+            return `<button class="offer-prop-btn" data-cid="${cid}" style="border-left:5px solid ${color}" title="${t("title_view_card")}">${escapeHtml(cell.name)}</button>`;
         }).join("");
     };
 
     card.innerHTML = `
         <div class="card-header" style="background:${senderColor}">
-            <div class="card-type-label">🤝 Предложение сделки</div>
-            <h1>От ${escapeHtml(offer.fromName)}</h1>
+            <div class="card-type-label">${t("offer_title")}</div>
+            <h1>${t("offer_from_label", { name: escapeHtml(offer.fromName) })}</h1>
         </div>
         <div class="card-body">
             <div class="offer-section">
-                <div class="offer-label">Ты получаешь:</div>
+                <div class="offer-label">${t("offer_take")}</div>
                 ${mkPropList(offer.myProps)}
                 ${offer.myCash > 0 ? `<div class="offer-cash">+ $${offer.myCash}</div>` : ""}
             </div>
             <div class="offer-arrow">⇅</div>
             <div class="offer-section">
-                <div class="offer-label">Ты отдаёшь:</div>
+                <div class="offer-label">${t("offer_give")}</div>
                 ${mkPropList(offer.theirProps)}
                 ${offer.theirCash > 0 ? `<div class="offer-cash debt">− $${offer.theirCash}</div>` : ""}
             </div>
@@ -1236,11 +1446,11 @@ function renderIncomingOffer(card, offer, _myPlayer) {
     });
 
     const actions = $("card-actions");
-    actions.appendChild(makeBtn("Принять", () => {
+    actions.appendChild(makeBtn(t("btn_accept_offer"), () => {
         socket.emit("trade:accept");
         viewingOffer = false;
     }, "primary"));
-    actions.appendChild(makeBtn("Отклонить", () => {
+    actions.appendChild(makeBtn(t("btn_decline_offer"), () => {
         socket.emit("trade:decline");
         viewingOffer = false;
     }, "secondary"));
@@ -1255,7 +1465,7 @@ function renderOfferBuilder(card, myPlayer) {
     }
 
     const mkCheckable = (cids, selected, side) => {
-        if (!cids || cids.length === 0) return '<div class="offer-empty">нет карт</div>';
+        if (!cids || cids.length === 0) return `<div class="offer-empty">${t("offer_no_cards")}</div>`;
         return cids.map((cid) => {
             const cell = state.board[cid];
             const own = state.ownership[cid];
@@ -1266,7 +1476,7 @@ function renderOfferBuilder(card, myPlayer) {
                 <button class="offer-toggle ${isSel ? 'selected' : ''}"
                         data-side="${side}" data-cid="${cid}"
                         style="border-left:5px solid ${color}"
-                        ${disabled ? 'disabled title="Сначала снеси постройки"' : ''}>
+                        ${disabled ? `disabled title="${t("title_demolish_first")}"` : ''}>
                     ${escapeHtml(cell.name)}
                 </button>
             `;
@@ -1275,24 +1485,24 @@ function renderOfferBuilder(card, myPlayer) {
 
     card.innerHTML = `
         <div class="card-header" style="background:${target.color}">
-            <div class="card-type-label">🤝 Предложение сделки</div>
-            <h1>Для ${escapeHtml(target.name)}</h1>
+            <div class="card-type-label">${t("offer_title")}</div>
+            <h1>${t("offer_to_label", { name: escapeHtml(target.name) })}</h1>
         </div>
         <div class="card-body">
             <div class="offer-section">
-                <div class="offer-label">Я отдаю (мои карты):</div>
+                <div class="offer-label">${t("offer_my_props")}</div>
                 <div class="offer-props-grid">${mkCheckable(myPlayer.properties, offerBuilderMyProps, 'my')}</div>
                 <div class="trade-row">
-                    <label>+ деньги:</label>
+                    <label>${t("offer_plus_money")}</label>
                     <input type="number" id="offer-my-cash" min="0" max="${myPlayer.balance}" value="0" step="10">
                 </div>
             </div>
             <div class="offer-arrow">⇅</div>
             <div class="offer-section">
-                <div class="offer-label">Я хочу (его карты):</div>
+                <div class="offer-label">${t("offer_their_props")}</div>
                 <div class="offer-props-grid">${mkCheckable(target.properties, offerBuilderTheirProps, 'their')}</div>
                 <div class="trade-row">
-                    <label>+ деньги:</label>
+                    <label>${t("offer_plus_money")}</label>
                     <input type="number" id="offer-their-cash" min="0" max="${target.balance}" value="0" step="10">
                 </div>
             </div>
@@ -1312,7 +1522,7 @@ function renderOfferBuilder(card, myPlayer) {
     });
 
     const actions = $("card-actions");
-    actions.appendChild(makeBtn("Отправить", () => {
+    actions.appendChild(makeBtn(t("btn_send"), () => {
         const myCash = parseInt($("offer-my-cash")?.value, 10) || 0;
         const theirCash = parseInt($("offer-their-cash")?.value, 10) || 0;
         socket.emit("trade:send-offer", {
@@ -1326,7 +1536,7 @@ function renderOfferBuilder(card, myPlayer) {
         offerBuilderMyProps = new Set();
         offerBuilderTheirProps = new Set();
     }, "primary"));
-    actions.appendChild(makeBtn("Отмена", () => {
+    actions.appendChild(makeBtn(t("btn_cancel"), () => {
         offerBuilderTargetId = null;
         offerBuilderMyProps = new Set();
         offerBuilderTheirProps = new Set();
@@ -1348,9 +1558,9 @@ function renderAuctionView(card, myPlayer) {
         const isCurrent = pid === a.currentBidderId;
         const passed = a.passedIds.includes(pid);
         let status;
-        if (passed) status = "пас";
-        else if (isCurrent) status = `$${a.currentBid} ведёт`;
-        else status = "ждёт";
+        if (passed) status = t("casino_passed");
+        else if (isCurrent) status = t("auction_status_leading", { amount: a.currentBid });
+        else status = t("auction_status_waiting");
         return `
             <div class="auction-player-line ${passed ? 'passed' : ''} ${isCurrent ? 'leading' : ''}">
                 <span class="color-swatch" style="background:${p.color};width:14px;height:14px"></span>
@@ -1367,30 +1577,30 @@ function renderAuctionView(card, myPlayer) {
 
     const myRow = amIActive ? `
         <div class="casino-bet-row">
-            <label>Ставка (мин $${minBid}):</label>
+            <label>${t("auction_bet_min", { amount: minBid })}</label>
             <input type="number" id="auction-bid-input" min="${minBid}" value="${minBid}" step="${a.minRaise}">
         </div>
     ` : "";
 
     card.innerHTML = `
         <div class="card-header" style="background:${groupColor}">
-            <div class="card-type-label">🔨 Аукцион</div>
+            <div class="card-type-label">${t("auction_title")}</div>
             <h1>${escapeHtml(cell.name)}</h1>
         </div>
         <div class="card-body">
-            <div class="card-price">Стартовая цена: <b>$${a.startPrice}</b></div>
+            <div class="card-price">${t("auction_start_price", { amount: a.startPrice })}</div>
             <div class="casino-stats">
                 <div class="casino-stat jackpot">
-                    <div class="stat-label">Текущая ставка</div>
+                    <div class="stat-label">${t("auction_current_bid")}</div>
                     <div class="stat-value">${a.currentBid > 0 ? `$${a.currentBid}` : "—"}</div>
                 </div>
                 <div class="casino-stat pool">
-                    <div class="stat-label">Шаг</div>
+                    <div class="stat-label">${t("auction_step")}</div>
                     <div class="stat-value">$${a.minRaise}</div>
                 </div>
             </div>
-            ${currentBidderPlayer ? `<div class="card-owner-line">Лидер: <span style="color:${currentBidderPlayer.color}">${escapeHtml(currentBidderPlayer.name)}</span></div>` : ""}
-            <h3 class="player-view-section-title">Участники</h3>
+            ${currentBidderPlayer ? `<div class="card-owner-line">${t("auction_leader")}: <span style="color:${currentBidderPlayer.color}">${escapeHtml(currentBidderPlayer.name)}</span></div>` : ""}
+            <h3 class="player-view-section-title">${t("auction_participants")}</h3>
             <div class="casino-bets">${bidLines}</div>
             ${myRow}
             <div id="card-actions"></div>
@@ -1399,55 +1609,57 @@ function renderAuctionView(card, myPlayer) {
 
     const actions = $("card-actions");
     if (amIActive) {
-        actions.appendChild(makeBtn(`Ставить`, () => {
+        actions.appendChild(makeBtn(t("btn_bid"), () => {
             const amount = parseInt($("auction-bid-input").value, 10);
             socket.emit("auction:bid", { amount });
         }, "primary"));
-        actions.appendChild(makeBtn("Пас", () => {
+        const passBtn = makeBtn(t("btn_pass"), () => {
             socket.emit("auction:pass");
-        }, "secondary"));
+        }, "secondary");
+        if (a.currentBidderId === myPlayer?.id) {
+            passBtn.disabled = true;
+            passBtn.title = t("tooltip_auction_leader_no_pass");
+        }
+        actions.appendChild(passBtn);
     }
 }
 
 function renderCasinoOffer(card, _myPlayer, minBet) {
     card.innerHTML = `
         <div class="card-header casino-header">
-            <div class="card-type-label">🎰 Казино</div>
-            <h1>Казино</h1>
+            <div class="card-type-label">${t("casino_header_label")}</div>
+            <h1>${t("casino_header_title")}</h1>
         </div>
         <div class="card-body">
             <div class="casino-jackpot-line">
-                <span>Джекпот:</span>
+                <span>${t("casino_jackpot")}:</span>
                 <b>$${state.jackpot}</b>
             </div>
-            <div class="card-drawn-text">
-                Барабан из 3 слотов: 💎 👑 ⭐ 🍒. Сделай ставку и крути.
-                Проигрыш → джекпот. 💎💎 — забираешь джекпот + бонус.
-            </div>
+            <div class="card-drawn-text">${t("casino_brief")}</div>
             <div class="casino-bet-row">
-                <label>Ставка ($${minBet} – $${state.casinoMaxBet || 500}):</label>
+                <label>${t("casino_bet_label", { min: minBet, max: state.casinoMaxBet || 500 })}</label>
                 <input type="number" id="casino-bet-input" min="${minBet}" max="${state.casinoMaxBet || 500}" value="${minBet}" step="10">
             </div>
             <div class="casino-mode-row">
                 <label class="mode-option">
                     <input type="radio" name="casino-mode" value="group" checked>
-                    <span>С другими игроками</span>
+                    <span>${t("casino_mode_group")}</span>
                 </label>
                 <label class="mode-option">
                     <input type="radio" name="casino-mode" value="solo">
-                    <span>Одному</span>
+                    <span>${t("casino_mode_solo")}</span>
                 </label>
             </div>
             <div id="card-actions"></div>
         </div>
     `;
     const actions = $("card-actions");
-    actions.appendChild(makeBtn("Играть", () => {
+    actions.appendChild(makeBtn(t("btn_play"), () => {
         const bet = parseInt($("casino-bet-input").value, 10);
         const mode = document.querySelector('input[name="casino-mode"]:checked')?.value;
         socket.emit("casino:accept", { bet, solo: mode === "solo" });
     }, "primary"));
-    actions.appendChild(makeBtn("Отказаться", () => {
+    actions.appendChild(makeBtn(t("btn_decline"), () => {
         socket.emit("casino:decline");
     }, "secondary"));
 }
@@ -1466,7 +1678,7 @@ function renderCasinoView(card, myPlayer, isMyTurn) {
         return `
             <div class="casino-bet-line${isInit ? ' init' : ''}">
                 <span class="color-swatch" style="background:${p.color};width:14px;height:14px"></span>
-                <span class="bet-name">${escapeHtml(p.name)}${isInit ? ' (инициатор)' : ''}</span>
+                <span class="bet-name">${escapeHtml(p.name)}${isInit ? ' ' + t("casino_initiator") : ''}</span>
                 <span class="bet-amount">$${game.bets[pid]}</span>
             </div>
         `;
@@ -1479,7 +1691,7 @@ function renderCasinoView(card, myPlayer, isMyTurn) {
             <div class="casino-bet-line pending">
                 <span class="color-swatch" style="background:${p.color};width:14px;height:14px"></span>
                 <span class="bet-name">${escapeHtml(p.name)}</span>
-                <span class="bet-amount">ждём...</span>
+                <span class="bet-amount">${t("casino_waiting")}</span>
             </div>
         `;
     }).join("");
@@ -1494,7 +1706,7 @@ function renderCasinoView(card, myPlayer, isMyTurn) {
                 <div class="casino-bet-line declined">
                     <span class="color-swatch" style="background:${p.color};width:14px;height:14px"></span>
                     <span class="bet-name">${escapeHtml(p.name)}</span>
-                    <span class="bet-amount">пас</span>
+                    <span class="bet-amount">${t("casino_passed")}</span>
                 </div>
             `;
         }).join("");
@@ -1503,20 +1715,20 @@ function renderCasinoView(card, myPlayer, isMyTurn) {
     if (game.result && !casinoAnimState) {
         if (game.result.win) {
             const multiText = game.result.jackpotWin
-                ? "джекпот"
+                ? t("casino_combo_jackpot").toLowerCase()
                 : `×${game.result.multiplier}`;
             resultHtml = `
                 <div class="casino-result win">
-                    <div class="result-title">${game.result.jackpotWin ? "🎊 ДЖЕКПОТ! 🎊" : "🎉 ВЫИГРЫШ! 🎉"}</div>
-                    <div>Приз: <b>$${game.result.prize}</b> (${multiText})</div>
-                    <div>Каждому: <b>$${game.result.perWinner}</b></div>
+                    <div class="result-title">${game.result.jackpotWin ? t("casino_result_jackpot") : t("casino_result_win")}</div>
+                    <div>${t("casino_result_prize", { amount: game.result.prize, mult: multiText })}</div>
+                    <div>${t("casino_result_per_winner", { amount: game.result.perWinner })}</div>
                 </div>
             `;
         } else {
             resultHtml = `
                 <div class="casino-result loss">
-                    <div class="result-title">💨 Без выигрыша</div>
-                    <div>$${game.result.toJackpot} уходит в джекпот</div>
+                    <div class="result-title">${t("casino_result_lose")}</div>
+                    <div>${t("casino_result_to_jackpot", { amount: game.result.toJackpot })}</div>
                 </div>
             `;
         }
@@ -1526,15 +1738,15 @@ function renderCasinoView(card, myPlayer, isMyTurn) {
     const maxBet = state.casinoMaxBet || 500;
     const myBetRow = amIWaiting ? `
         <div class="casino-bet-row">
-            <label>Ставка ($${game.minBet} – $${maxBet}):</label>
+            <label>${t("casino_bet_label", { min: game.minBet, max: maxBet })}</label>
             <input type="number" id="casino-bet-input" min="${game.minBet}" max="${maxBet}" value="${game.minBet}" step="10">
         </div>
     ` : "";
 
     card.innerHTML = `
         <div class="card-header casino-header">
-            <div class="card-type-label">🎰 Казино</div>
-            <h1>Казино</h1>
+            <div class="card-type-label">${t("casino_header_label")}</div>
+            <h1>${t("casino_header_title")}</h1>
         </div>
         <div class="card-body">
             <div class="casino-slots">
@@ -1544,24 +1756,32 @@ function renderCasinoView(card, myPlayer, isMyTurn) {
             </div>
 
             <div class="casino-combos">
-                <div class="combo-title">Комбинации</div>
-                <div class="combo-row"><span>💎 💎 💎</span><b>×50</b></div>
-                <div class="combo-row"><span>👑 👑 👑</span><b>×30</b></div>
-                <div class="combo-row"><span>⭐ ⭐ ⭐</span><b>×20</b></div>
-                <div class="combo-row"><span>🍒 🍒 🍒</span><b>×10</b></div>
-                <div class="combo-row combo-divider"><span>💎 💎</span><b>ДЖЕКПОТ</b></div>
-                <div class="combo-row"><span>👑 👑</span><b>×5</b></div>
-                <div class="combo-row"><span>⭐ ⭐</span><b>×3</b></div>
-                <div class="combo-row"><span>🍒 🍒</span><b>×2</b></div>
+                <div class="combo-title">${t("casino_combos")}</div>
+                <div class="combo-row combo-divider"><span>💎 💎 💎</span><b>${t("casino_combo_jackpot")} ×20</b></div>
+                <div class="combo-row"><span>👑 👑 👑</span><b>×10</b></div>
+                <div class="combo-row"><span>⭐ ⭐ ⭐</span><b>×5</b></div>
+                <div class="combo-row"><span>🍒 🍒 🍒</span><b>×3</b></div>
+                ${state.modifiers?.includes("gambler") ? `
+                <div class="combo-row"><span>🍋 🍋 🍋</span><b>×3</b></div>
+                <div class="combo-row"><span>🍇 🍇 🍇</span><b>×3</b></div>
+                ` : ""}
+                <div class="combo-row combo-divider"><span>💎 💎</span><b>×2</b></div>
+                <div class="combo-row"><span>👑 👑</span><b>×1.5</b></div>
+                <div class="combo-row"><span>⭐ ⭐</span><b>×1.3</b></div>
+                <div class="combo-row"><span>🍒 🍒</span><b>×1.2</b></div>
+                ${state.modifiers?.includes("gambler") ? `
+                <div class="combo-row"><span>🍋 🍋</span><b>×1.2</b></div>
+                <div class="combo-row"><span>🍇 🍇</span><b>×1.2</b></div>
+                ` : ""}
             </div>
 
             <div class="casino-stats">
                 <div class="casino-stat jackpot">
-                    <div class="stat-label">Джекпот</div>
+                    <div class="stat-label">${t("casino_jackpot")}</div>
                     <div class="stat-value">$${state.jackpot}</div>
                 </div>
                 <div class="casino-stat pool">
-                    <div class="stat-label">Сумма ставок</div>
+                    <div class="stat-label">${t("casino_pool")}</div>
                     <div class="stat-value">$${totalBet}</div>
                 </div>
             </div>
@@ -1583,23 +1803,23 @@ function renderCasinoView(card, myPlayer, isMyTurn) {
     const pa = state.pendingAction;
 
     if (amIWaiting) {
-        actions.appendChild(makeBtn("Играть", () => {
+        actions.appendChild(makeBtn(t("btn_play"), () => {
             const bet = parseInt($("casino-bet-input").value, 10);
             socket.emit("casino:join", { bet });
         }, "primary"));
-        actions.appendChild(makeBtn("Отказаться", () => {
+        actions.appendChild(makeBtn(t("btn_decline"), () => {
             socket.emit("casino:skip");
         }, "secondary"));
     }
 
     if (game.phase === "ready-to-spin" && myPlayer?.id === game.initiatorId) {
-        actions.appendChild(makeBtn("🎰 Крутить!", () => {
+        actions.appendChild(makeBtn(t("btn_spin"), () => {
             socket.emit("casino:spin");
         }, "primary"));
     }
 
     if (game.phase === "done" && !casinoAnimState && pa && pa.type === "casino-result" && isMyTurn && myPlayer?.id === game.initiatorId) {
-        actions.appendChild(makeBtn("Продолжить", () => {
+        actions.appendChild(makeBtn(t("btn_continue"), () => {
             socket.emit("casino:continue");
         }, "primary"));
     }
@@ -1613,6 +1833,22 @@ function makeBtn(label, onClick, variant = "primary") {
     return b;
 }
 
+function getInitials(name) {
+    if (!name) return "?";
+    const words = name.trim().split(/\s+/);
+    if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+    return (words[0][0] + words[words.length - 1][0]).toUpperCase();
+}
+
+function isDarkHex(hex) {
+    const m = String(hex || "").replace("#", "");
+    if (m.length < 6) return false;
+    const r = parseInt(m.substring(0, 2), 16);
+    const g = parseInt(m.substring(2, 4), 16);
+    const b = parseInt(m.substring(4, 6), 16);
+    return 0.299 * r + 0.587 * g + 0.114 * b < 128;
+}
+
 function escapeHtml(s) {
     return String(s)
         .replace(/&/g, "&amp;")
@@ -1621,10 +1857,6 @@ function escapeHtml(s) {
         .replace(/"/g, "&quot;");
 }
 
-$("own-cards-toggle").onclick = () => {
-    ownCardsExpanded = !ownCardsExpanded;
-    render();
-};
 
 class DebugTool {
     constructor(login, password) {

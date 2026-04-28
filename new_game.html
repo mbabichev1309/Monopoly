@@ -6,93 +6,98 @@
     <title>Monopoly — Новая игра</title>
     <link rel="stylesheet" href="src/style.css">
     <script src="/socket.io/socket.io.js"></script>
+    <script src="script/i18n.js"></script>
 </head>
 <body>
     <div id="main" style="max-width: 640px">
         <div id="greeting">
-            <h1>Настройка игры</h1>
+            <h1 data-i18n="newgame_title">Настройка игры</h1>
         </div>
 
+        <h3 class="settings-heading" data-i18n="section_preset">Карта (набор городов)</h3>
         <div class="lobby-form">
-            <h3>Количество игроков (2–6):
-                <input type="number" id="max-players" value="2" min="2" max="6">
+            <h3>
+                <span data-i18n="newgame_preset_label">Пресет</span>:
+                <select id="preset-select"></select>
             </h3>
+            <div class="trade-hint" id="preset-description" style="text-align:center; margin-top:4px"></div>
         </div>
 
-        <h3 class="settings-heading">Режим</h3>
+        <h3 class="settings-heading" data-i18n="section_mode">Режим</h3>
         <div class="mode-options">
             <label class="mode-card">
                 <input type="radio" name="mode" value="classic" checked>
                 <div class="mode-card-body">
-                    <div class="mode-name">Классика</div>
-                    <div class="mode-desc">Стандартные правила Монополии. Стартовый баланс $1500.</div>
+                    <div class="mode-name" data-i18n="mode_classic">Классика</div>
+                    <div class="mode-desc" data-i18n="mode_classic_desc">Стандартные правила Монополии. Стартовый баланс $1500.</div>
                 </div>
             </label>
             <label class="mode-card">
                 <input type="radio" name="mode" value="blitz">
                 <div class="mode-card-body">
-                    <div class="mode-name">Блиц</div>
-                    <div class="mode-desc">Стартовый баланс $800. Аренда ×2. Быстрые партии.</div>
+                    <div class="mode-name" data-i18n="mode_blitz">Блиц</div>
+                    <div class="mode-desc" data-i18n="mode_blitz_desc">Стартовый баланс $800. Аренда ×2. Быстрые партии.</div>
                 </div>
             </label>
         </div>
 
-        <h3 class="settings-heading">Правила</h3>
+        <h3 class="settings-heading" data-i18n="section_rules">Правила</h3>
         <div class="modifier-options">
             <label class="mod-card">
                 <input type="checkbox" name="feature" value="casino" checked>
                 <div class="mod-card-body">
-                    <div class="mod-name">🎰 Казино</div>
-                    <div class="mod-desc">Клетка казино с слот-машиной.</div>
+                    <div class="mod-name" data-i18n="rule_casino">🎰 Казино</div>
+                    <div class="mod-desc" data-i18n="rule_casino_desc">Клетка казино с слот-машиной.</div>
                 </div>
             </label>
             <label class="mod-card">
                 <input type="checkbox" name="feature" value="auction" checked>
                 <div class="mod-card-body">
-                    <div class="mod-name">🔨 Аукцион</div>
-                    <div class="mod-desc">При отказе от покупки улица продаётся на аукционе.</div>
+                    <div class="mod-name" data-i18n="rule_auction">🔨 Аукцион</div>
+                    <div class="mod-desc" data-i18n="rule_auction_desc">При отказе от покупки улица продаётся на аукционе.</div>
                 </div>
             </label>
         </div>
 
-        <h3 class="settings-heading">Модификаторы (можно несколько)</h3>
+        <h3 class="settings-heading" data-i18n="section_modifiers">Модификаторы (можно несколько)</h3>
         <div class="modifier-options">
             <label class="mod-card">
                 <input type="checkbox" name="modifier" value="magnate">
                 <div class="mod-card-body">
-                    <div class="mod-name">🏛️ Магнат</div>
-                    <div class="mod-desc">Все аренды +10%.</div>
+                    <div class="mod-name" data-i18n="mod_magnate">🏛️ Магнат</div>
+                    <div class="mod-desc" data-i18n="mod_magnate_desc">Все аренды +10%.</div>
                 </div>
             </label>
             <label class="mod-card">
                 <input type="checkbox" name="modifier" value="chances">
                 <div class="mod-card-body">
-                    <div class="mod-name">🃏 Шансы</div>
-                    <div class="mod-desc">Карты Шанс/Казна: +25% к получаемым/списываемым суммам.</div>
+                    <div class="mod-name" data-i18n="mod_chances">🃏 Шансы</div>
+                    <div class="mod-desc" data-i18n="mod_chances_desc">Карты Шанс/Казна: +25% к получаемым/списываемым суммам.</div>
                 </div>
             </label>
             <label class="mod-card">
                 <input type="checkbox" name="modifier" value="gambler">
                 <div class="mod-card-body">
-                    <div class="mod-name">🎰 Азартный</div>
-                    <div class="mod-desc">В казино +2 символа (ниже шанс выигрыша), но выигрыши ×1.5.</div>
+                    <div class="mod-name" data-i18n="mod_gambler">🎰 Азартный</div>
+                    <div class="mod-desc" data-i18n="mod_gambler_desc">В казино +2 символа (ниже шанс выигрыша), но выигрыши ×1.5.</div>
                 </div>
             </label>
         </div>
 
-        <h3 class="settings-heading">Хост</h3>
+        <h3 class="settings-heading" data-i18n="section_host">Хост</h3>
         <div class="lobby-form">
-            <h3>Твоё имя: <input type="text" id="host-name" maxlength="16"></h3>
-            <h3>Цвет: <input type="color" id="host-color"></h3>
+            <h3><span data-i18n="join_name">Твоё имя</span>: <input type="text" id="host-name" maxlength="16"></h3>
+            <h3><span data-i18n="join_color">Цвет</span>: <input type="color" id="host-color"></h3>
         </div>
 
-        <button id="btn-create" class="big-create-btn"><h3>🎲 Создать игру</h3></button>
-        <button id="btn-back" class="secondary-btn" style="margin-top:10px"><h4>← Назад в меню</h4></button>
+        <button id="btn-create" class="big-create-btn"><h3 data-i18n="create_game_btn">🎲 Создать игру</h3></button>
+        <button id="btn-back" class="secondary-btn" style="margin-top:10px"><h4 data-i18n="back_to_menu">← Назад в меню</h4></button>
 
         <div id="error-message"></div>
     </div>
 
     <script>
+        I18N.load("lobby").then(dict => I18N.applyTranslations(document, dict));
         const socket = io();
 
         function randomColor() {
@@ -113,6 +118,28 @@
         }
         document.getElementById("host-color").value = randomColor();
 
+        const presetSelect = document.getElementById("preset-select");
+        const presetDescEl = document.getElementById("preset-description");
+        let availablePresets = [];
+
+        socket.on("connect", () => {
+            socket.emit("presets:list", {}, (list) => {
+                availablePresets = list || [];
+                presetSelect.innerHTML = availablePresets
+                    .map((p) => `<option value="${p.id}">${p.name}</option>`)
+                    .join("");
+                const hasMain = availablePresets.find((p) => p.id === "main");
+                presetSelect.value = hasMain ? "main" : (availablePresets[0]?.id || "");
+                updatePresetDesc();
+            });
+        });
+
+        function updatePresetDesc() {
+            const p = availablePresets.find((pp) => pp.id === presetSelect.value);
+            presetDescEl.innerText = p ? (p.description || "") : "";
+        }
+        presetSelect.onchange = updatePresetDesc;
+
         const errorMsg = document.getElementById("error-message");
         function showError(msg) {
             errorMsg.innerText = msg;
@@ -124,7 +151,6 @@
         };
 
         document.getElementById("btn-create").onclick = () => {
-            const maxPlayers = parseInt(document.getElementById("max-players").value, 10);
             const name = document.getElementById("host-name").value.trim();
             const color = document.getElementById("host-color").value;
             const mode = document.querySelector('input[name="mode"]:checked')?.value || "classic";
@@ -133,9 +159,10 @@
                 casino: !!document.querySelector('input[name="feature"][value="casino"]:checked'),
                 auction: !!document.querySelector('input[name="feature"][value="auction"]:checked'),
             };
+            const preset = presetSelect.value || "main";
 
-            if (!name) { showError("Введи имя."); return; }
-            socket.emit("lobby:create", { maxPlayers, playerName: name, playerColor: color, mode, modifiers, features });
+            if (!name) { showError(I18N.t("error_enter_name")); return; }
+            socket.emit("lobby:create", { playerName: name, playerColor: color, mode, modifiers, features, preset });
         };
 
         socket.on("lobby:created", ({ lobbyId, you }) => {

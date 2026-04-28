@@ -2,6 +2,7 @@ const { BOARD, GROUP_COLORS } = require("./board-data");
 const { CHANCE_CARDS, COMMUNITY_CARDS, shuffle } = require("./cards");
 const shuffleArr = shuffle;
 const CFG = require("./config");
+const presets = require("./presets");
 
 const casino = require("./logic/casino");
 const trade = require("./logic/trade");
@@ -30,9 +31,15 @@ class GameState {
             casino: settings.features?.casino !== false,
             auction: settings.features?.auction !== false,
         };
+        this.presetId = settings.preset || "main";
+        this.preset = presets.get(this.presetId) || presets.get("main");
         const modeCfg = CFG.modes[this.mode] || CFG.modes.classic;
         const effectiveStartBalance = modeCfg.startBalance ?? START_BALANCE;
         this.rentMultiplier = modeCfg.rentMultiplier || 1.0;
+
+        this.board = this.preset && Array.isArray(this.preset.cells)
+            ? BOARD.map((c, i) => ({ ...c, name: this.preset.cells[i] || c.name }))
+            : BOARD;
 
         const shuffled = shuffleArr(lobbyPlayers);
         this.players = shuffled.map((p, idx) => ({
@@ -47,6 +54,7 @@ class GameState {
             jailTurns: 0,
             bankrupt: false,
             left: false,
+            leftAtRound: null,
             giftAmounts: {},
             lapCount: 0,
             mutedIds: [],
@@ -80,6 +88,7 @@ class GameState {
         this.casinoGame = null;
         this.pendingOffers = {};
         this.auction = null;
+        this.lastMoveDirection = "forward";
 
         this.ownership = {};
         for (const cell of BOARD) {
@@ -102,6 +111,7 @@ class GameState {
                 inJail: p.inJail,
                 bankrupt: p.bankrupt,
                 left: p.left || false,
+                leftAtRound: p.leftAtRound ?? null,
                 giftAmounts: p.giftAmounts || {},
                 lapCount: p.lapCount,
                 mutedIds: p.mutedIds || [],
@@ -116,6 +126,8 @@ class GameState {
             mode: this.mode,
             modifiers: this.modifiers,
             features: this.features,
+            rentMultiplier: this.rentMultiplier * (this.modifiers.includes("magnate") ? 1.1 : 1),
+            lastMoveDirection: this.lastMoveDirection,
             currentPlayerIndex: this.currentPlayerIndex,
             currentPlayerId: this.players[this.currentPlayerIndex].id,
             currentPlayerSocketId: this.players[this.currentPlayerIndex].socketId,
@@ -133,8 +145,10 @@ class GameState {
             auction: this.auction,
             pendingOffers: this.pendingOffers,
             giftLimits: { maxPerRecipient: GIFT_MONEY_MAX_PER_RECIPIENT },
-            board: BOARD,
+            board: this.board,
             groupColors: GROUP_COLORS,
+            presetId: this.presetId,
+            presetName: this.preset ? this.preset.name : "Мир",
             ownership: this.ownership,
             log: this.log.slice(-50),
         };
@@ -195,6 +209,7 @@ class GameState {
 
     rollDice(player) {
         if (this.phase !== "roll") return { error: "Сейчас не фаза броска." };
+        this.lastMoveDirection = "forward";
 
         const d1 = 1 + Math.floor(Math.random() * 6);
         const d2 = 1 + Math.floor(Math.random() * 6);
@@ -252,8 +267,17 @@ class GameState {
 
         if (cell.type === "corner") {
             if (cell.action === "go-to-jail") {
-                this.sendToJail(player);
-                this.logMsg(`{p:${player.id}} отправлен в тюрьму!`);
+                const text = "Отправляйся в тюрьму. Не проходи Старт.";
+                this.lastDrawnCard = { type: "corner", text };
+                this.phase = "action";
+                this.pendingAction = {
+                    type: "card-draw",
+                    cardType: "corner",
+                    text,
+                    pendingCardAction: { type: "jail" },
+                };
+                this.logMsg(`{p:${player.id}} попал на «Иди в тюрьму».`);
+                return;
             }
             this.phase = "action";
             this.pendingAction = this.doublesCount > 0 && !player.inJail
@@ -272,14 +296,27 @@ class GameState {
             const deckKey = cell.type === "chance" ? "chanceIndex" : "communityIndex";
             const card = deck[this[deckKey] % deck.length];
             this[deckKey]++;
-            this.lastDrawnCard = { type: cell.type, text: card.text };
-            this.logMsg(`{p:${player.id}} вытянул: "${card.text}"`);
+
+            let resolvedAction = card.action;
+            let resolvedText = card.text;
+            if (card.action.type === "move-random-group") {
+                const group = card.action.group;
+                const groupCells = this.board.filter((c) => c.type === "property" && c.group === group);
+                if (groupCells.length > 0) {
+                    const target = groupCells[Math.floor(Math.random() * groupCells.length)];
+                    resolvedAction = { type: "move", position: target.id, collectOnPass: card.action.collectOnPass };
+                    resolvedText = `Пройдите на ${target.name}.`;
+                }
+            }
+
+            this.lastDrawnCard = { type: cell.type, text: resolvedText };
+            this.logMsg(`{p:${player.id}} вытянул: "${resolvedText}"`);
             this.phase = "action";
             this.pendingAction = {
                 type: "card-draw",
                 cardType: cell.type,
-                text: card.text,
-                pendingCardAction: card.action,
+                text: resolvedText,
+                pendingCardAction: resolvedAction,
             };
             return;
         }
@@ -302,11 +339,7 @@ class GameState {
 
             if (own.ownerId === null) {
                 this.phase = "action";
-                if (player.balance >= cell.price) {
-                    this.pendingAction = { type: "buy-option", cardId: cell.id, price: cell.price };
-                } else {
-                    this.pendingAction = this.doublesCount > 0 ? { type: "roll-again" } : { type: "end-turn-only" };
-                }
+                this.pendingAction = { type: "buy-option", cardId: cell.id, price: cell.price };
                 return;
             }
 
@@ -371,11 +404,14 @@ class GameState {
             next = (next + 1) % this.players.length;
             if (!this.players[next].bankrupt && !this.players[next].left) break;
         }
-        if (next <= oldIdx) this.roundNumber++;
+        if (next <= oldIdx) {
+            this.roundNumber++;
+            this.sweepLeftPlayers();
+        }
         this.currentPlayerIndex = next;
         this.phase = "roll";
 
-        const alive = this.players.filter((p) => !p.bankrupt && !p.left);
+        const alive = this.players.filter((p) => !p.bankrupt);
         if (alive.length === 1 && this.players.length > 1) {
             this.phase = "ended";
             this.winnerId = alive[0].id;
@@ -492,6 +528,15 @@ class GameState {
     markLeft(player) {
         if (player.bankrupt || player.left) return;
         player.left = true;
+        player.leftAtRound = this.roundNumber;
+        this.logMsg(`👋 {p:${player.id}} вышел. Имущество сохранится 3 круга — может вернуться.`);
+
+        if (this.players[this.currentPlayerIndex].id === player.id) this.forceNextTurn();
+        this.checkGameOver();
+    }
+
+    finalizeLeft(player) {
+        if (!player.left || player.bankrupt) return;
         for (const cid of [...player.properties]) {
             const own = this.ownership[cid];
             own.ownerId = null;
@@ -500,11 +545,29 @@ class GameState {
             own.locked = true;
         }
         player.properties = [];
-        this.logMsg(`👋 {p:${player.id}} вышел из игры.`);
-
+        player.balance = 0;
+        player.bankrupt = true;
         if (!this.bankruptcyOrder.includes(player.id)) this.bankruptcyOrder.push(player.id);
-        if (this.players[this.currentPlayerIndex].id === player.id) this.forceNextTurn();
+        this.logMsg(`🏚 {p:${player.id}} не вернулся за 3 круга — имущество ушло банку.`);
         this.checkGameOver();
+    }
+
+    returnToGame(player) {
+        if (!player.left || player.bankrupt) return false;
+        player.left = false;
+        player.leftAtRound = null;
+        this.logMsg(`🔄 {p:${player.id}} вернулся в игру.`);
+        return true;
+    }
+
+    sweepLeftPlayers() {
+        for (const p of this.players) {
+            if (p.left && !p.bankrupt && typeof p.leftAtRound === "number") {
+                if (this.roundNumber - p.leftAtRound >= 3) {
+                    this.finalizeLeft(p);
+                }
+            }
+        }
     }
 
     forceNextTurn() {
@@ -520,7 +583,7 @@ class GameState {
     }
 
     checkGameOver() {
-        const alive = this.players.filter((p) => !p.bankrupt && !p.left);
+        const alive = this.players.filter((p) => !p.bankrupt);
         if (alive.length === 1 && this.players.length > 1) {
             this.phase = "ended";
             this.winnerId = alive[0].id;

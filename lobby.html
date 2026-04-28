@@ -6,11 +6,12 @@
     <title>Monopoly — Комната ожидания</title>
     <link rel="stylesheet" href="src/style.css">
     <script src="/socket.io/socket.io.js"></script>
+    <script src="script/i18n.js"></script>
 </head>
 <body>
     <div id="main" style="max-width: 640px">
         <div id="greeting">
-            <h1>Комната ожидания</h1>
+            <h1 data-i18n="lobby_title">Комната ожидания</h1>
         </div>
 
         <div id="lobby-info">
@@ -20,6 +21,7 @@
 
         <div id="game-settings-info">
             <div class="game-info-row"><span class="info-label">Режим:</span> <span id="info-mode" class="info-value">—</span></div>
+            <div class="game-info-row"><span class="info-label">Карта:</span> <span id="info-preset" class="info-value">—</span></div>
             <div class="game-info-row"><span class="info-label">Игроков:</span> <span id="info-count" class="info-value">0/0</span></div>
             <div class="game-info-row"><span class="info-label">Правила:</span> <span id="info-features" class="info-value">—</span></div>
             <div class="game-info-row"><span class="info-label">Модификаторы:</span> <span id="info-mods" class="info-value">—</span></div>
@@ -40,6 +42,7 @@
     </div>
 
     <script>
+        I18N.load("lobby").then(dict => I18N.applyTranslations(document, dict));
         const socket = io();
 
         const MODE_NAMES = { classic: "Классика", blitz: "Блиц" };
@@ -95,9 +98,16 @@
             socket.emit("lobby:rejoin", { lobbyId, playerName: me.name });
         });
 
-        socket.on("lobby:updated", ({ players, maxPlayers, hostSocketId, mode, modifiers, features }) => {
+        let presetsCache = [];
+        socket.on("connect", () => {
+            socket.emit("presets:list", {}, (list) => { presetsCache = list || []; });
+        });
+
+        socket.on("lobby:updated", ({ players, maxPlayers, hostSocketId, mode, modifiers, features, preset }) => {
             document.getElementById("info-count").innerText = `${players.length}/${maxPlayers}`;
             document.getElementById("info-mode").innerText = MODE_NAMES[mode] || mode || "Классика";
+            const presetObj = presetsCache.find((p) => p.id === preset);
+            document.getElementById("info-preset").innerText = presetObj ? presetObj.name : (preset || "Мир");
             const modNames = (modifiers || []).map((m) => MOD_NAMES[m] || m);
             document.getElementById("info-mods").innerText = modNames.length ? modNames.join(", ") : "нет";
             const f = features || { casino: true, auction: true };

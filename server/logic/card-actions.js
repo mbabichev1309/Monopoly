@@ -118,6 +118,7 @@ function apply(game, player, action) {
         const oldPos = player.position;
         player.position = ((player.position + action.steps) % BOARD_SIZE + BOARD_SIZE) % BOARD_SIZE;
         if (action.collectOnPass && action.steps > 0 && player.position < oldPos) game.passGo(player);
+        if (action.steps < 0) game.lastMoveDirection = "backward";
         game.resolveCell(player);
         return;
     }
